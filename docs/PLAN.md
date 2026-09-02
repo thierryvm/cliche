@@ -21,6 +21,17 @@ presse-papier. Aucune donnée ne quitte la machine.
 | Défilement | **Pages web d'abord** (lot 7). N'importe quelle fenêtre : hors périmètre v1 | Le recollage générique est fragile ; on ne paie pas ce prix avant d'avoir le reste |
 | Plateformes | Code portable (trait `Capturer`), **livraison Windows seule** | La couche capture est irréductiblement Windows |
 | Aide intégrée | **Lot 2**, juste après le squelette — pas à la fin | Demande explicite |
+| Système visuel | **Lot D, AVANT les écrans** — déplacé depuis le lot 6 | Demande du 2 sept. : le verre et la fenêtre étroite se décident avant, pas après |
+| Mise à jour auto | **Aucune pour l'instant**, opt-in le jour d'un second utilisateur | Arbitré dans `docs/UPDATES.md` : un updater fait sortir des requêtes |
+
+### Les documents du projet, et qui répond à quoi
+
+| Document | La question à laquelle il répond |
+| --- | --- |
+| `docs/PRD.md` | **Pour qui**, dans quelles situations, et à quoi on reconnaît que c'est réussi |
+| `docs/STACK.md` | **Avec quoi** on construit, et ce que chaque option aurait fermé |
+| `docs/UPDATES.md` | **Faut-il** une mise à jour automatique, et ce qu'elle ferait sortir de la machine |
+| `docs/PLAN.md` (ici) | **Dans quel ordre** on construit, et ce qui pourrait casser |
 
 ## État de la machine — mesuré le 2 septembre 2026
 
@@ -56,6 +67,47 @@ lèverait cette dette en une session.
 
 **Risque** : désaccord entre `tauri-cli` 2.11.4 et le crate `tauri` 2.11.5, ou
 WebView2 non trouvé. *On le verrait à* : `pnpm tauri dev` qui échoue au premier lancement.
+
+---
+
+## Lot D — Le système visuel, et sa page vitrine
+
+**Déplacé ici depuis le lot 6 le 2 septembre 2026**, à la demande de Thierry, et il a
+raison : le verre translucide et l'utilisabilité en fenêtre étroite ne sont pas une
+finition. Ce sont des décisions de structure. Les prendre après avoir écrit cinq écrans,
+c'est réécrire cinq écrans.
+
+**Fichiers** : `src/design/tokens.css` (les jetons, source unique) ·
+`src/design/glass.css` · `src/design/components.css` ·
+`src/pages/SystemeVisuel.tsx` (la vitrine) · `src/App.tsx` (la route)
+
+**Ce que ça produit, concrètement** : une page **ouvrable dans l'application**, qui
+montre chaque jeton et chaque composant **avec tous ses états** — repos, survol, focus
+clavier, actif, désactivé, chargement, erreur, vide. Pas une capture d'écran de
+maquette : la vraie page, avec les vrais styles, celle qui casse si un jeton change.
+
+**Fini quand** :
+1. La page `/design` s'ouvre dans l'application et liste les jetons **lus depuis le CSS**,
+   pas recopiés à la main.
+2. Chaque composant y apparaît dans **tous** ses états, y compris le focus clavier.
+3. Quatre captures : **375 px** et **1440 px**, en **thème clair** et **thème sombre**.
+4. À **480×600** (la taille minimale déclarée dans `tauri.conf.json`), rien n'est coupé
+   et aucun défilement horizontal n'apparaît.
+5. Le contraste du texte sur verre est **mesuré** contre le fond le plus clair ET le plus
+   sombre qui puisse passer derrière : ≥ 4,5:1. Mesuré, pas regardé.
+
+**Risque n°1** — « verre à la Apple » ≠ Acrylic de Windows. L'effet se compose de deux
+choses distinctes : le matériau de fenêtre (`window-vibrancy` 0.8.0) **et** des panneaux
+internes en `backdrop-filter`. *On le verrait à* : la revue d'interface.
+
+**Risque n°2 — celui qui coule le verre** : du texte lisible sur un fond qui bouge. Un
+`backdrop-filter` seul rend un rectangle laiteux et illisible. La parade est écrite dans
+la compétence `verre-et-mobile-first` : cinq couches, un repli `@supports`, un repli
+`prefers-reduced-transparency`, et un plafond de trois surfaces de verre par écran.
+
+**Méthode** : compétences `design-system` puis `verre-et-mobile-first` **avant** d'écrire
+le CSS, agent **Design** pour l'écrire, agent **Relecteur UI** pour le relire sur l'écran
+qui tourne — jamais l'auteur.
 
 ---
 
@@ -172,20 +224,26 @@ doivent exister **dès ce lot**. *On le verrait à* : l'audit Sécurité.
 
 ---
 
-## Lot 6 — Le verre, et la fenêtre étroite
+## Lot 6 — Le système visuel APPLIQUÉ à tous les écrans
 
-**Fichiers** : `src/styles/tokens.css` · composants d'interface
+Le système lui-même est décidé au **lot D**, avant les écrans. Ce lot-ci n'invente rien :
+il vérifie que les écrans construits entre-temps (Aide, éditeur, bibliothèque) emploient
+réellement les jetons, et il rattrape ceux qui ont dérivé.
 
-**Fini quand** : à **480×600**, tous les menus restent atteignables — constaté par
-capture d'écran, pas par relecture de code. Thème clair et thème sombre tous les deux
-vérifiés.
+**Fichiers** : les écrans écrits aux lots 2, 4 et 5 · `src/design/*` en lecture
 
-**Méthode** : skills `design-system` puis `verre-et-mobile-first` **avant** d'écrire le
-CSS, puis l'agent **Relecteur UI** sur l'écran qui tourne.
+**Fini quand** :
+1. Une recherche de valeurs en dur (couleur hexadécimale, taille en pixels, rayon) dans
+   les composants ne rend **rien** hors de `src/design/`. Le système existe à un seul
+   endroit ou il n'existe pas.
+2. Chaque écran est vu à **480×600** en thème clair et sombre : tous les menus
+   atteignables, aucun défilement horizontal — **constaté par capture, pas par relecture
+   de code**.
+3. La revue de l'agent **Relecteur UI** est passée sur chaque écran.
 
-**Risque** : « verre à la Apple » ≠ Acrylic de Windows. L'effet visé se compose de deux
-choses distinctes : le matériau de fenêtre (`window-vibrancy` 0.8.0) **et** des panneaux
-internes en `backdrop-filter`. *On le verrait à* : la revue d'interface.
+**Risque** : la dérive silencieuse. Un `#2b2b2b` posé « juste pour ce cas » pendant le
+lot 4 ne se voit pas à l'œil et casse le thème clair. *On le verrait à* : le point 1,
+qui est une recherche, pas un avis.
 
 ---
 
@@ -218,10 +276,19 @@ acquis.
    presse-papier Windows. Repli identifié : `arboard` 3.6.1 — mature (43 M de
    téléchargements) mais **sans publication depuis le 23 août 2025**, ce qui dépasse le
    seuil de 6 mois du profil et doit être signalé si on y vient.
-6. **La géométrie déjà éprouvée d'AgentOS** (`normaliseRect`, `versSource`,
-   `dispositionPlanche`, `verdictCapture`, 9 tests) serait réutilisable telle quelle.
-   **Je ne l'ai pas lue** : elle vit hors de `F:\PROJECTS\Apps\cliche` et la consigne
-   est de rester dans ce dossier. En attente d'un feu vert explicite.
+6. ~~La géométrie d'AgentOS serait réutilisable telle quelle.~~ **RÉSOLU le 2 septembre
+   2026** : Thierry a donné le feu vert, `apps/web/src/lib/capture.ts` a été lu en lecture
+   seule. Verdict corrigé — **environ la moitié se transpose**, et « telle quelle » était
+   faux : c'est du TypeScript qui doit être réécrit en Rust, et les 9 tests d'origine ne
+   se recompilent pas. Le détail de ce qui se reprend et de ce qui ne se reprend pas est
+   dans `docs/STACK.md`, section « Ce qu'on reprend de l'existant ».
+7. **Trois lignes vides sont apparues dans ce fichier** le 2 septembre 2026 à 22:57:39,
+   pendant l'exécution de deux sous-agents en parallèle, **sans auteur identifié**.
+   Constaté : +3 octets pour +3 lignes, donc aucun caractère de texte ajouté ni retiré ;
+   tableau des décisions, liste ci-dessus et section « Comment on teste » relus et
+   identiques. Vraisemblablement un normaliseur de markdown. Le dépôt git a été initialisé
+   dans la foulée : à partir du commit `1987d16`, une modification sans auteur devient
+   visible dans un diff au lieu de se deviner à l'octet près.
 
 ## Comment on teste une application Tauri
 
