@@ -10,12 +10,18 @@
 packages:
   - '.'
 
+# Dependencies permitted to run install scripts, and why. pnpm 11 WRITES this
+# block itself when it meets an ignored build, seeding it with the placeholder
+# "set this to true or false" -- which is neither, so the build stays ignored
+# and `pnpm install` exits 1. Measured on 2 September 2026: removing the block
+# does not help, pnpm puts it back on the next install. It has to be ANSWERED.
+#
+#   esbuild - Vite's bundler. Its postinstall places the platform-specific
+#   binary. Reviewed and allowed deliberately.
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
 
-# Allow-list of dependencies permitted to run install scripts. Keep it minimal
-# and give every entry a written reason.
-#   esbuild — Vite's bundler. Its postinstall places the platform-specific
-#   binary; without it, `vite` and `pnpm typecheck`'s toolchain cannot run.
-onlyBuiltDependencies:
-  - esbuild
+# NOTE: `onlyBuiltDependencies` used to sit here as well. It was removed on
+# 2 September 2026 after measurement: with it present and `allowBuilds` unset,
+# esbuild's postinstall was STILL skipped and `pnpm install` exited 1. It
+# configured nothing while looking like it did, which is worse than absent.

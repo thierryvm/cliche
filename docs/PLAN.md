@@ -22,7 +22,10 @@ presse-papier. Aucune donnée ne quitte la machine.
 | Plateformes | Code portable (trait `Capturer`), **livraison Windows seule** | La couche capture est irréductiblement Windows |
 | Aide intégrée | **Lot 2**, juste après le squelette — pas à la fin | Demande explicite |
 | Système visuel | **Lot D, AVANT les écrans** — déplacé depuis le lot 6 | Demande du 2 sept. : le verre et la fenêtre étroite se décident avant, pas après |
-| Mise à jour auto | **Aucune pour l'instant**, opt-in le jour d'un second utilisateur | Arbitré dans `docs/UPDATES.md` : un updater fait sortir des requêtes |
+| Mise à jour auto | **Aucune pour l'instant**, opt-in **avant la première copie distribuée** | Arbitré dans `docs/UPDATES.md` : un updater fait sortir des requêtes. Le déclencheur a été resserré le 2 sept. : un updater ne peut mettre à jour qu'un binaire qui le contient déjà, donc « quand il y aura des utilisateurs » est trop tard |
+| Dépôt GitHub | **Public**, sous `thierryvm`, **sans fichier LICENSE** | Mesuré le 2 sept. : sur ce compte, la protection de branche rend `403 — Upgrade to GitHub Pro or make this repository public`. Privé et branche protégée sont incompatibles ici. Sans LICENSE, le droit d'auteur par défaut s'applique : lisible, pas réutilisable |
+| CI | `windows-latest` uniquement, 2 jobs : `Quality gates` + `Windows build` | La couche capture est irréductiblement Windows ; un job Linux vert ne prouverait rien. Gratuit et sans plafond sur un dépôt public |
+| Numéro de version | **Trois fichiers, un contrôle** — `scripts/check-version.mjs` | Aucun mécanisme de source unique n'a été vérifié pour cette version de Tauri ; on ne suppose pas, on contrôle. Détail dans `docs/RELEASES.md §3` |
 
 ### Les documents du projet, et qui répond à quoi
 
@@ -31,7 +34,22 @@ presse-papier. Aucune donnée ne quitte la machine.
 | `docs/PRD.md` | **Pour qui**, dans quelles situations, et à quoi on reconnaît que c'est réussi |
 | `docs/STACK.md` | **Avec quoi** on construit, et ce que chaque option aurait fermé |
 | `docs/UPDATES.md` | **Faut-il** une mise à jour automatique, et ce qu'elle ferait sortir de la machine |
+| `docs/RELEASES.md` | **Comment** on publie une version, et ce qui est déjà prêt pour le jour de l'updater |
 | `docs/PLAN.md` (ici) | **Dans quel ordre** on construit, et ce qui pourrait casser |
+
+### Distribution — ce qui est prêt, et ce qui reste à activer
+
+Rien de ceci ne bloque un lot. C'est l'infrastructure autour du code, tenue à
+jour au fil de l'eau plutôt qu'en fin de projet.
+
+| Prêt, vérifié le 2 septembre 2026 | Reste à activer |
+| --- | --- |
+| Dépôt git local, 3 commits, arbre propre | Le dépôt distant — **en attente du GO de Thierry** |
+| `.github/workflows/ci.yml` — chaque commande vérifiée localement | La CI n'a **jamais tourné sur GitHub** : son orchestration reste une hypothèse |
+| `scripts/check-version.mjs` — testé dans les deux sens (0 et 1) | — |
+| `docs/RELEASES.md` — procédure de publication complète | La première release réelle |
+| `docs/UPDATES.md §7.2` — les 11 emplacements de l'updater | La paire de clés, délibérément non générée : `docs/RELEASES.md §6` |
+| `capabilities/` vide de plugins, pour que l'ajout de l'updater soit visible en une ligne de diff | — |
 
 ## État de la machine — mesuré le 2 septembre 2026
 
