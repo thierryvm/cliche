@@ -1,0 +1,30 @@
+[package]
+name = "cliche"
+version = "0.1.0"
+description = "Local screenshot utility for Windows"
+edition = "2021"
+rust-version = "1.77.2"
+publish = false
+
+# The logic lives in a library so it can be unit-tested with `cargo test`
+# without going through the binary entry point.
+[lib]
+name = "cliche_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cliche"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Version pinned to the minor line verified on crates.io on 2 September 2026.
+tauri = { version = "2.11.5", features = [] }
+# Required for #[derive(Serialize)] on the command's return type. Tauri depends
+# on serde already; declaring it here is what lets us use the derive macro.
+serde = { version = "1", features = ["derive"] }
+
+# No networking crate, no telemetry, no logging backend: this application talks
+# to nobody. Startup diagnostics go to stdout, which `pnpm tauri dev` shows.

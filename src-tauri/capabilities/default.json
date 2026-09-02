@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Core permissions for the main window. No plugin is enabled: Cliché has no filesystem, shell or network permission at this stage, and each one must be added here deliberately when a lot needs it.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

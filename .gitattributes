@@ -1,0 +1,30 @@
+# Normalise line endings at commit time, and check out LF everywhere.
+#
+# WHY `eol=lf` AND NOT THE WINDOWS DEFAULT: this repository is developed on
+# Windows, but its toolchain is not Windows-flavoured. `rustfmt`, `cargo`,
+# Vite and pnpm all emit LF; without this file Git rewrites those files to
+# CRLF on checkout and every subsequent diff shows whole files as changed,
+# which makes review useless and hides real edits.
+#
+# The Windows application manifest is the concrete reason this matters here.
+# It is embedded byte-for-byte into the executable by the resource compiler,
+# and a malformed manifest makes the binary refuse to start with
+# `os error 14001` -- a failure that `cargo build` reports as success.
+# See `src-tauri/windows-app-manifest.xml`. Leaving its encoding to a
+# platform default is exactly the class of mistake that already cost a
+# debugging session on 2 September 2026.
+* text=auto eol=lf
+
+# Binary: never touch these, never try to diff them as text.
+*.png   binary
+*.ico   binary
+*.icns  binary
+*.jpg   binary
+*.webp  binary
+*.woff  binary
+*.woff2 binary
+
+# Lockfiles are generated. Keep them in the repository (reproducible builds)
+# but collapse them in diffs so review stays readable.
+pnpm-lock.yaml      linguist-generated=true -diff
+src-tauri/Cargo.lock linguist-generated=true -diff

@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Application manifest for Cliche.
+
+  THIS FILE MUST STAY PURE ASCII. DO NOT WRITE "Cliche" WITH ITS ACCENT HERE.
+  Measured on 2 September 2026, and it cost a debugging session:
+    - this source file held "Cliche" with an e-acute, correctly encoded UTF-8
+      (bytes C3 A9);
+    - tauri-build routes the manifest through a generated .rc file, and the
+      resource compiler re-encodes it to the ANSI code page. The embedded
+      manifest then held a lone E9 byte;
+    - a lone E9 is not valid UTF-8, while the declaration above claims UTF-8.
+      The Windows SxS loader rejects the whole manifest.
+  The failure mode is nasty: `cargo build` SUCCEEDS. The binary is produced and
+  then refuses to start with os error 14001, "side-by-side configuration is
+  incorrect", reported at line 1. Nothing points at this file.
+
+  WHY THIS FILE EXISTS
+  Tauri 2 does embed a default manifest, but that default declares ONLY the
+  Common-Controls v6 dependency below - it says nothing about DPI. Verified on
+  2 September 2026 by reading
+  crates/tauri-build/src/windows-app-manifest.xml on the tauri-apps/tauri
+  `dev` branch and on the tauri-build-v2.5.0 tag: both contain the dependency
+  block and nothing else. So per-monitor DPI awareness has to be declared here.
+
+  WHY THE MANIFEST AND NOT THE RUNTIME CALL
+  tao (Tauri's windowing layer) has `become_dpi_aware()`, which calls
+  SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2). Microsoft nevertheless
+  documents the manifest as the recommended route: the API call happens after
+  process start, so any DPI-dependent call made before it wins, and the call
+  then fails with ERROR_ACCESS_DENIED. The manifest is applied before a single
+  line of our code runs. The two are consistent, not in conflict - the manifest
+  simply gets there first.
+
+  WHY THE COMMON-CONTROLS BLOCK IS COPIED HERE
+  WindowsAttributes::app_manifest() REPLACES the default manifest wholesale, it
+  does not merge. Deleting the dependency block below would silently drop
+  visual styles and send every common control back to the Windows 95 look.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 and Windows 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+      <!-- Windows 8.1 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" />
+    </application>
+  </compatibility>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <!--
+        Windows 10 1607 and later read this one. PerMonitorV2 is the only mode
+        that rescales non-client areas (title bar, menus, scrollbars) and that
+        delivers WM_DPICHANGED, which is what a screenshot tool needs to keep
+        its geometry honest when a window moves between screens.
+      -->
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <!--
+        Fallback for Windows 8.1 through Windows 10 1507, which ignore the tag
+        above. "true/pm" means: system-aware on Vista..8.0, per-monitor on 8.1+.
+      -->
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <!--
+        Screenshots get saved under user-chosen paths that can exceed MAX_PATH.
+      -->
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+</assembly>

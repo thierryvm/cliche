@@ -1,0 +1,21 @@
+# Single-package repository: the frontend lives at the root, the Rust backend in
+# src-tauri/ and is driven by cargo, not by pnpm.
+#
+# This file exists for two reasons:
+#   1. it pins the repository root for pnpm, so a stray install run from a
+#      subdirectory cannot create a second node_modules tree;
+#   2. pnpm 11 reads settings from here, NOT from the "pnpm" field of
+#      package.json any more (measured on 2 September 2026: that field is read,
+#      then ignored, with a warning).
+packages:
+  - '.'
+
+allowBuilds:
+  esbuild: set this to true or false
+
+# Allow-list of dependencies permitted to run install scripts. Keep it minimal
+# and give every entry a written reason.
+#   esbuild — Vite's bundler. Its postinstall places the platform-specific
+#   binary; without it, `vite` and `pnpm typecheck`'s toolchain cannot run.
+onlyBuiltDependencies:
+  - esbuild
