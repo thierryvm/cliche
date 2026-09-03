@@ -118,6 +118,58 @@ ignored and `pnpm install` exits 1 — which in turn fails `pnpm tauri build`,
 since the Tauri CLI runs an install check first. Deleting the block does not
 help: pnpm puts it back. It has to be answered. Measured 2 September 2026.
 
+## Measuring the capture path
+
+The question the skeleton exists to answer: from the entry of the shortcut
+handler to a full-screen veil showing the **frozen** screen — is the median
+under 150 ms?
+
+Two transports are compiled in and chosen at **startup**, by environment
+variable, so switching between them is a restart and not a rebuild:
+
+| `CLICHE_TRANSPORT` | Route | Encoding cost |
+| --- | --- | --- |
+| `bmp` *(default)* | Rust serves a BMP from memory on the `cliche:` scheme, the page loads it with an `<img>` | a 66-byte header and one `memcpy` |
+| `png` | PNG, base64, pushed in as a `data:` URL | **69.6 ms** median, measured 3 September 2026 — 46 % of the budget |
+
+```powershell
+# Twenty automated runs, no keyboard, transport A then transport B.
+$env:CLICHE_BENCH = '20'; $env:CLICHE_TRANSPORT = 'bmp'; pnpm tauri dev
+$env:CLICHE_BENCH = '20'; $env:CLICHE_TRANSPORT = 'png'; pnpm tauri dev
+
+# Or press Ctrl+Shift+2 twenty times; the report prints itself either way.
+```
+
+`CLICHE_BENCH` calls **the same function** the shortcut calls, which measures
+the same interval — `t0` is the entry of the handler, so everything the
+keyboard does before that is already outside every figure printed. The three
+ways it is nevertheless gentler than a real press are written out above
+`veil::spawn_bench`, and they all flatter the result. Treat it as a floor and
+the keyboard as the arbiter.
+
+Reading the report: `capture` · `transport` · `shown` · `painted`, then a
+TOTAL. **`painted` is an approximation with a known error in each direction** —
+it carries the acknowledgement's own trip back to Rust (too large) and stops at
+a `requestAnimationFrame` callback rather than at compositor presentation (too
+small). Both are spelled out at the top of `src-tauri/src/veil.rs`; neither is
+hidden behind the word "measured".
+
+### The one CSP entry this needs
+
+`img-src` gains exactly one origin, in both `csp` and `devCsp`:
+
+```
+http://cliche.localhost
+```
+
+That is where WebView2 serves the custom `cliche:` scheme on Windows — the same
+`http://<scheme>.localhost` rule the pre-existing `http://asset.localhost`
+entry follows. Nothing else changes: `connect-src` still allows only Tauri's
+IPC channel, `script-src` is still `'self'`, and the veil page fetches nothing
+of its own. `tauri.conf.json` is strict JSON and cannot carry a comment, so the
+reasoning lives in `veil::VEIL_ORIGIN` — with a unit test that pins the exact
+string, so the constant and the policy cannot drift apart in silence.
+
 ## Stack
 
 | Piece | Version | Note |
@@ -141,8 +193,9 @@ To regenerate them from a squared PNG: `pnpm tauri icon ./app-icon.png`.
 ## Layout
 
 ```
-index.html            frontend entry
-vite.config.ts
+index.html            frontend entry — the application window
+veil.html             SECOND entry — the full-screen veil, no React, no tokens
+vite.config.ts        two rollup inputs, one per entry above
 tsconfig.json         strict, plus noUncheckedIndexedAccess & friends
 scripts/
   check-version.mjs   one version number, three files, one check
@@ -154,6 +207,8 @@ src/                  React frontend
     tokens.css        THE source of truth for the visual system
     components.css    buttons, fields, glass, rows, grid — no raw values
     Showcase.tsx      the openable showcase, at #/systeme
+  veil/
+    main.ts           bare TypeScript: show the frozen frame, acknowledge, Escape
 src-tauri/
   build.rs            embeds the custom Windows manifest
   windows-app-manifest.xml   per-monitor DPI aware v2 — read the comments
@@ -163,6 +218,10 @@ src-tauri/
     main.rs           binary entry point
     lib.rs            builder, startup logging
     displays.rs       display enumeration + unit tests
+    timing.rs         the instrument the whole verdict rests on
+    capture.rs        screen grab, PNG and BMP encoders, measured separately
+    shortcut.rs       the global shortcut, registered from Rust
+    veil.rs           preheated veil window, both transports, the benchmark
 ```
 
 ## DPI awareness

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cliché veil</title>
+    <!--
+      A SEPARATE entry point, on purpose.
+
+      This document must not load React, the design tokens or anything else the
+      application window carries. Two reasons, and the second is the one that
+      matters:
+
+      1. It pollutes the measurement. Lot 1d asks how long it takes to paint a
+         frozen screen; a bundle that boots a framework first answers a
+         different question.
+      2. It pollutes the product. The veil has no state, no theme, no
+         interaction beyond one key. Anything it loads is weight paid on every
+         capture, for ever.
+
+      The style block below is inline because the veil has exactly six rules and
+      a separate stylesheet would be one more request between the shortcut and
+      the image. `style-src` already allows 'unsafe-inline'; no CSP change is
+      needed for it.
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        /* Black, not white: the window becomes visible one instant before the
+           image is decoded, and a white flash on a dark screen is far more
+           violent than a black one. */
+        background: #000;
+        overflow: hidden;
+      }
+
+      /* The frozen screen is captured at the monitor's PHYSICAL pixel size, and
+         the window is sized to the same rectangle, so 100vw/100vh is a 1:1 map.
+         `object-fit: fill` rather than `contain`: a letterbox would mean the
+         two sizes disagree, and hiding that would hide a real bug. */
+      #frame {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        object-fit: fill;
+        display: block;
+      }
+
+      #frame[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <img id="frame" alt="" hidden />
+    <script type="module" src="/src/veil/main.ts"></script>
+  </body>
+</html>

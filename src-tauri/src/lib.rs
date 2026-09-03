@@ -7,6 +7,7 @@ pub mod capture;
 mod displays;
 mod shortcut;
 pub mod timing;
+pub mod veil;
 
 pub use displays::{collect_displays, describe_displays, summarize, DisplayInfo};
 
@@ -17,7 +18,22 @@ use timing::Timings;
 /// Builds and runs the application. Returns only when the app exits.
 pub fn run() {
     let result = tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![displays::describe_displays])
+        // The frozen frame is served from MEMORY on this scheme; nothing is
+        // written to disk and nothing leaves the process. On Windows the
+        // webview reaches it at `http://cliche.localhost/frame/<n>.bmp`, which
+        // is the origin `img-src` has to allow in `tauri.conf.json`.
+        //
+        // The handler only ever hands back the ONE buffer the current run
+        // staged, for the exact run number in the path, and takes it as it
+        // does so. Any other path gets a 404: this scheme is not a file server.
+        .register_uri_scheme_protocol(veil::VEIL_SCHEME, |ctx, request| {
+            veil::serve(ctx.app_handle(), request.uri().path())
+        })
+        .invoke_handler(tauri::generate_handler![
+            displays::describe_displays,
+            veil::veil_painted,
+            veil::veil_dismissed,
+        ])
         .setup(|app| {
             // Logged from the backend, before the webview has had a chance to
             // render. If the window comes up blank - a CSP mistake, a dev
@@ -34,12 +50,48 @@ pub fn run() {
             // instant registration succeeds.
             app.manage(Timings::new());
 
+            // The transport is read ONCE, here, and never again: switching
+            // between the two candidate routes is a restart with a different
+            // environment variable, not a rebuild. A value that is not
+            // understood is announced rather than swallowed - measuring
+            // transport A while believing you measured B is the one mistake
+            // that would invalidate the whole comparison.
+            let (transport, transport_warning) =
+                veil::Transport::parse(std::env::var(veil::TRANSPORT_ENV).ok().as_deref());
+            if let Some(warning) = transport_warning {
+                eprintln!("{warning}");
+            }
+            println!("[cliche] veil: transport {}", transport.describe());
+            app.manage(veil::Veil::new(transport));
+
+            // Built HERE, at startup, hidden. Creating a window means creating
+            // a WebView2 instance and loading a document: hundreds of
+            // milliseconds, once. Doing it inside the shortcut handler would
+            // put that cost inside the 150 ms budget, and it is exactly the
+            // shortcut this lot exists to refuse.
+            if let Err(error) = veil::create(app.handle()) {
+                eprintln!("{error}");
+            }
+
             if let Err(error) = shortcut::install(app.handle()) {
                 // Deliberately not `return Err(...)`: a combination the OS
                 // refuses must not stop the application. But it must not pass
                 // in silence either - Cliche would look perfectly fine and do
                 // nothing. The message says which shortcut, and why.
                 eprintln!("{error}");
+            }
+
+            // Measuring without touching the keyboard. `CLICHE_BENCH=20` runs
+            // the very same `perform_capture` the shortcut calls; read
+            // `veil::spawn_bench` for the three ways it is nevertheless
+            // gentler than a real press.
+            let (bench_runs, bench_warning) =
+                veil::parse_bench(std::env::var(veil::BENCH_ENV).ok().as_deref());
+            if let Some(warning) = bench_warning {
+                eprintln!("{warning}");
+            }
+            if let Some(runs) = bench_runs {
+                veil::spawn_bench(app.handle(), runs);
             }
 
             Ok(())

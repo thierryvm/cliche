@@ -13,12 +13,10 @@
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{
     Builder as GlobalShortcutBuilder, GlobalShortcutExt, Shortcut, ShortcutState,
 };
-
-use crate::timing::Timings;
 
 /// The capture shortcut, in the plugin's own syntax.
 ///
@@ -53,7 +51,12 @@ pub fn capture_shortcut() -> Result<Shortcut, String> {
 }
 
 /// Whether the run just filed completes a batch worth reporting on.
-fn report_due(run_number: usize) -> bool {
+///
+/// `pub(crate)` because the caller moved in 1d: a run is now FILED when the
+/// webview acknowledges the paint, not when the handler returns, so `veil.rs`
+/// is where the batch is counted. The rule itself stays here, next to the
+/// constant it reads and the tests that pin it.
+pub(crate) fn report_due(run_number: usize) -> bool {
     run_number > 0 && run_number % RUNS_PER_REPORT == 0
 }
 
@@ -99,17 +102,15 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
                 return;
             }
 
-            // `try_state`, never `state`: `state` panics when the type was
-            // never managed, and a panic on this thread ends the application.
-            // A missing instrument is a diagnostic, not a crash.
-            let Some(timings) = app.try_state::<Timings>() else {
-                eprintln!(
-                    "[cliche] shortcut: no timing instrument is managed; this press was not measured"
-                );
-                return;
-            };
+            // `saturating_add` for the same reason as everything else on this
+            // path: a debug overflow panic here would kill the application over
+            // a counter. Printed BEFORE the capture, so that a press which then
+            // fails somewhere still leaves a trace in the terminal.
+            let press = runs.fetch_add(1, Ordering::Relaxed).saturating_add(1);
+            println!("[cliche] shortcut: press {press}");
 
-            // t0 IS THIS LINE - and that is a limitation, not a design choice.
+            // t0 IS THE FIRST LINE OF `perform_capture` - and that is a
+            // limitation, not a design choice.
             //
             // "shortcut pressed -> handler entered" is NOT measurable from
             // inside this process. Nothing gives us the instant the key went
@@ -122,23 +123,14 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
             // Read the 150 ms budget accordingly: it is counted from HERE, not
             // from the user's finger. The unmeasured part is unknown, and
             // unknown is not the same as zero.
-            timings.begin_run();
-            timings.mark("handler");
-            timings.finish_run();
-
-            // `saturating_add` for the same reason as everything else on this
-            // path: a debug overflow panic here would kill the application over
-            // a counter.
-            let run = runs.fetch_add(1, Ordering::Relaxed).saturating_add(1);
-            println!("[cliche] shortcut: run {run}");
-
-            if report_due(run) {
-                // The point of the exercise: press 20 times, read the terminal.
-                // No command to type, no window to open.
-                for line in timings.report().lines() {
-                    println!("[cliche] {line}");
-                }
-            }
+            //
+            // The whole pipeline lives in `veil::perform_capture` rather than
+            // in this closure for one reason: the automated benchmark has to
+            // call THE SAME code, or it would be measuring a different program.
+            // The press counter above is not the measurement - a run is filed
+            // when the webview acknowledges the paint, and `veil.rs` prints the
+            // report every twenty of those.
+            crate::veil::perform_capture(app);
         })
         .map_err(|error| registration_failure(&error.to_string()))
 }

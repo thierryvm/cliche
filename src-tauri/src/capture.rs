@@ -303,6 +303,130 @@ pub fn encode_png(frame: &Frame) -> Result<Vec<u8>, String> {
     Ok(png)
 }
 
+/// Size of the BMP header this module writes: `BITMAPFILEHEADER` (14) +
+/// `BITMAPINFOHEADER` (40) + three 32-bit channel masks (12).
+///
+/// The masks live in the colour-table area, right after the info header, which
+/// is why `bfOffBits` is 66 and not 54.
+const BMP_HEADER_BYTES: usize = 14 + 40 + 12;
+
+/// Wraps a frame in a BMP header, in memory, WITHOUT touching the pixels.
+///
+/// # Why BMP, and why hand-written - the arithmetic
+///
+/// Measured on this machine on 3 September 2026: capture 24.2 ms, PNG encode
+/// **69.6 ms**, against a 150 ms budget. The PNG spends 46 % of the budget
+/// compressing an image that never leaves the machine and is thrown away a
+/// second later. Every byte of that work is pure loss on this path.
+///
+/// A BMP is a header and the pixels. This function allocates once and does a
+/// single `memcpy`; for a 1920x1080 frame that is 8.29 MB of memory bandwidth,
+/// which costs single-digit milliseconds, against 69.6 ms. That is the entire
+/// justification, and it is a comparison of two measured/derived numbers, not a
+/// preference.
+///
+/// # Why not `image`'s `BmpEncoder`
+///
+/// It would mean enabling the crate's `bmp` feature, and - more importantly -
+/// trusting its header choices sight unseen. The two choices below are exactly
+/// what makes this function a `memcpy` instead of a per-pixel loop, and neither
+/// is guaranteed by a general-purpose encoder:
+///
+/// - **Top-down rows** (`biHeight` negative). BMP is bottom-up by default; a
+///   bottom-up writer has to walk the rows backwards, which is a per-row copy
+///   instead of one.
+/// - **`BI_BITFIELDS` with the masks describing R,G,B in that byte order.** BMP
+///   is conventionally BGRA; declaring the masks lets the decoder read OUR RGBA
+///   bytes as they already are. Without it, every pixel needs a channel swap -
+///   a byte loop over 8.29 MB, compiled WITHOUT optimisation in this crate (see
+///   the `[profile.dev.package."*"]` note in `Cargo.toml`, which optimises
+///   dependencies only). That loop is precisely the kind of cost that made the
+///   first dev-build measurement of `capture` read 140.8 ms.
+///
+/// # Alpha
+///
+/// Only three masks are declared, so there is no alpha channel: the fourth byte
+/// of every pixel is padding the decoder must ignore, and the image is opaque.
+/// This is deliberate. `GetDIBits` on a `BI_RGB` desktop DC leaves the high
+/// byte undefined, so an image that HONOURED that byte could come out fully
+/// transparent - a black veil, or no veil at all, for a reason that would look
+/// like a rendering bug.
+///
+/// # What is NOT proven here
+///
+/// That WebView2's decoder accepts this file. The unit tests below check the
+/// header against the documented layout and round-trip it through `image`'s own
+/// BMP decoder (a dev-dependency), which is an INDEPENDENT reader - but it is
+/// not Chromium's. Only running the app settles that.
+pub fn encode_bmp(frame: &Frame) -> Result<Vec<u8>, String> {
+    let pixels = frame.pixels();
+
+    // Every conversion is checked. A `as i32` on a width above 2^31 would wrap
+    // to a negative number, and a negative `biWidth` is not "a big image", it is
+    // a malformed file - the sort of thing that produces a blank veil and no
+    // error message at all.
+    let width = i32::try_from(frame.width())
+        .map_err(|_| format!("a width of {} does not fit a BMP header", frame.width()))?;
+    let height = i32::try_from(frame.height())
+        .map_err(|_| format!("a height of {} does not fit a BMP header", frame.height()))?;
+    let payload_bytes = u32::try_from(pixels.len()).map_err(|_| {
+        format!(
+            "a payload of {} byte(s) does not fit a BMP header",
+            pixels.len()
+        )
+    })?;
+    let file_bytes = u32::try_from(BMP_HEADER_BYTES)
+        .ok()
+        .and_then(|header| header.checked_add(payload_bytes))
+        .ok_or_else(|| "the BMP file size does not fit in 32 bits".to_owned())?;
+
+    // Rows are 32 bits per pixel, so the stride is always a multiple of 4 and
+    // BMP's row padding rule never applies. That is the second reason this can
+    // be one copy: there is nothing to insert between rows.
+    let mut bmp = Vec::with_capacity(BMP_HEADER_BYTES + pixels.len());
+
+    // --- BITMAPFILEHEADER (14 bytes) ---
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&file_bytes.to_le_bytes());
+    bmp.extend_from_slice(&0u16.to_le_bytes()); // bfReserved1
+    bmp.extend_from_slice(&0u16.to_le_bytes()); // bfReserved2
+    bmp.extend_from_slice(&(BMP_HEADER_BYTES as u32).to_le_bytes()); // bfOffBits
+
+    // --- BITMAPINFOHEADER (40 bytes) ---
+    bmp.extend_from_slice(&40u32.to_le_bytes()); // biSize
+    bmp.extend_from_slice(&width.to_le_bytes()); // biWidth
+                                                 // NEGATIVE height: top-down rows, first row in the file is the top row of
+                                                 // the screen. `wrapping_neg` and not `-`: `i32::MIN` has no positive
+                                                 // counterpart and would panic in debug. It is unreachable - a frame that
+                                                 // tall cannot be allocated - but nothing on this path may panic.
+    bmp.extend_from_slice(&height.wrapping_neg().to_le_bytes()); // biHeight
+    bmp.extend_from_slice(&1u16.to_le_bytes()); // biPlanes
+    bmp.extend_from_slice(&32u16.to_le_bytes()); // biBitCount
+    bmp.extend_from_slice(&3u32.to_le_bytes()); // biCompression = BI_BITFIELDS
+    bmp.extend_from_slice(&payload_bytes.to_le_bytes()); // biSizeImage
+    bmp.extend_from_slice(&0i32.to_le_bytes()); // biXPelsPerMeter
+    bmp.extend_from_slice(&0i32.to_le_bytes()); // biYPelsPerMeter
+    bmp.extend_from_slice(&0u32.to_le_bytes()); // biClrUsed
+    bmp.extend_from_slice(&0u32.to_le_bytes()); // biClrImportant
+
+    // --- Channel masks (12 bytes) ---
+    // A pixel is four bytes R,G,B,A in memory; read as a little-endian u32 that
+    // is `R | G<<8 | B<<16 | A<<24`. Hence these three masks, which say "our
+    // bytes are already in the right order, do not swap anything".
+    bmp.extend_from_slice(&0x0000_00FFu32.to_le_bytes()); // red
+    bmp.extend_from_slice(&0x0000_FF00u32.to_le_bytes()); // green
+    bmp.extend_from_slice(&0x00FF_0000u32.to_le_bytes()); // blue
+                                                          // No alpha mask on purpose - see the doc comment.
+
+    // The one bulk operation of this function. `extend_from_slice` on a `Vec<u8>`
+    // bottoms out in `copy_from_slice`, i.e. `memcpy` from the standard library,
+    // which ships precompiled and optimised. A hand-written `for` loop here
+    // would NOT be optimised in this crate.
+    bmp.extend_from_slice(pixels);
+
+    Ok(bmp)
+}
+
 /// Captures and encodes, timestamping each step on an already-open run.
 ///
 /// The run is NOT opened or closed here: the caller owns it, because the run
@@ -473,6 +597,152 @@ mod tests {
         assert_eq!((frame.width(), frame.height()), (3, 2));
         // Last pixel of the buffer: row 1, column 2, row-major.
         assert_eq!(&frame.pixels()[20..24], &[11, 22, 33, 44]);
+    }
+
+    // ---------------------------------------------------------------------
+    // BMP: the transport format 1d measures. See `encode_bmp` for the
+    // arithmetic that chose it over PNG.
+    // ---------------------------------------------------------------------
+
+    /// Reads a little-endian `i32` at `offset`. `try_into` rather than slicing
+    /// into an array by index so a wrong offset fails the test instead of
+    /// panicking in a way that hides which field is wrong.
+    fn le_i32(bytes: &[u8], offset: usize) -> i32 {
+        let field: [u8; 4] = bytes
+            .get(offset..offset + 4)
+            .and_then(|slice| slice.try_into().ok())
+            .unwrap_or_else(|| {
+                panic!(
+                    "no 4 bytes at offset {offset} of a {}-byte file",
+                    bytes.len()
+                )
+            });
+        i32::from_le_bytes(field)
+    }
+
+    fn le_u32(bytes: &[u8], offset: usize) -> u32 {
+        le_i32(bytes, offset) as u32
+    }
+
+    fn le_u16(bytes: &[u8], offset: usize) -> u16 {
+        let field: [u8; 2] = bytes
+            .get(offset..offset + 2)
+            .and_then(|slice| slice.try_into().ok())
+            .unwrap_or_else(|| panic!("no 2 bytes at offset {offset}"));
+        u16::from_le_bytes(field)
+    }
+
+    #[test]
+    fn a_bmp_is_a_66_byte_header_followed_by_the_pixels_unchanged() {
+        // The claim the whole transport choice rests on: encoding is a header
+        // plus a copy. If a single pixel byte differed, the "no per-pixel work"
+        // argument would be false.
+        let frame = known_frame();
+        let expected = frame.pixels().to_vec();
+
+        let bmp = encode_bmp(&frame).expect("a 3x2 frame must encode");
+
+        assert_eq!(bmp.len(), BMP_HEADER_BYTES + expected.len());
+        assert_eq!(&bmp[..2], b"BM", "every BMP starts with 'BM'");
+        assert_eq!(&bmp[BMP_HEADER_BYTES..], &expected[..]);
+    }
+
+    #[test]
+    fn the_bmp_header_declares_top_down_rows_and_bitfields_in_rgb_byte_order() {
+        // Every field checked against the documented BITMAPFILEHEADER /
+        // BITMAPINFOHEADER layout. These four are the ones that make the copy
+        // legal; getting any of them wrong yields a file that decodes to
+        // something upside down, blue-tinted, or transparent.
+        let bmp = encode_bmp(&known_frame()).expect("must encode");
+
+        assert_eq!(
+            le_u32(&bmp, 2),
+            bmp.len() as u32,
+            "bfSize is the whole file"
+        );
+        assert_eq!(
+            le_u32(&bmp, 10),
+            66,
+            "bfOffBits must clear header AND masks"
+        );
+        assert_eq!(le_u32(&bmp, 14), 40, "biSize: BITMAPINFOHEADER");
+        assert_eq!(le_i32(&bmp, 18), 3, "biWidth");
+        assert_eq!(
+            le_i32(&bmp, 22),
+            -2,
+            "biHeight must be NEGATIVE: a positive height means bottom-up, and \
+             the veil would show the screen upside down"
+        );
+        assert_eq!(le_u16(&bmp, 26), 1, "biPlanes");
+        assert_eq!(le_u16(&bmp, 28), 32, "biBitCount");
+        assert_eq!(le_u32(&bmp, 30), 3, "biCompression must be BI_BITFIELDS");
+        assert_eq!(le_u32(&bmp, 34), 24, "biSizeImage: 3x2x4");
+
+        assert_eq!(le_u32(&bmp, 54), 0x0000_00FF, "red is the FIRST byte");
+        assert_eq!(le_u32(&bmp, 58), 0x0000_FF00, "green is the second");
+        assert_eq!(le_u32(&bmp, 62), 0x00FF_0000, "blue is the third");
+    }
+
+    #[test]
+    fn a_bmp_round_trips_through_an_independent_decoder() {
+        // The strongest check available without a browser: `image`'s own BMP
+        // decoder - a reader that knows nothing about `encode_bmp` - is handed
+        // the file and must return the pixels we put in, right way up.
+        //
+        // `image`'s `bmp` feature is a DEV-dependency only (see Cargo.toml), so
+        // no BMP decoder ships in the application.
+        //
+        // If this test ever fails, do NOT relax it: the most likely cause is a
+        // header WebView2 would reject too.
+        let frame = known_frame();
+        let expected = frame.pixels().to_vec();
+
+        let bmp = encode_bmp(&frame).expect("must encode");
+        let decoded = image::load_from_memory_with_format(&bmp, ImageFormat::Bmp)
+            .expect("what we just encoded must decode")
+            .into_rgba8();
+
+        assert_eq!(decoded.dimensions(), (3, 2), "3 wide and 2 high, not 2x3");
+
+        // Alpha is deliberately NOT carried (no alpha mask), so the decoder is
+        // entitled to return 255 everywhere. Compare the three colour channels
+        // only - and say so, rather than quietly comparing a subset.
+        let actual = decoded.into_raw();
+        for (index, (got, want)) in actual
+            .chunks_exact(4)
+            .zip(expected.chunks_exact(4))
+            .enumerate()
+        {
+            assert_eq!(
+                &got[..3],
+                &want[..3],
+                "pixel {index}: R,G,B must survive the round trip (alpha is not carried, by design)"
+            );
+        }
+        assert_eq!(actual.len(), expected.len());
+    }
+
+    #[test]
+    fn the_bmp_decoder_rejects_nonsense_so_the_round_trip_is_not_vacuous() {
+        assert!(image::load_from_memory_with_format(b"not a bmp", ImageFormat::Bmp).is_err());
+        assert!(image::load_from_memory_with_format(b"BM", ImageFormat::Bmp).is_err());
+    }
+
+    #[test]
+    fn a_bmp_costs_the_raw_size_and_a_png_does_not_which_is_the_whole_trade() {
+        // Pins the shape of the trade-off 1d measures, in a form that fails if
+        // someone later makes `encode_bmp` compress: BMP is header + raw, PNG
+        // is smaller and pays for it in time (69.6 ms median, measured
+        // 3 September 2026).
+        let frame = known_frame();
+
+        let bmp = encode_bmp(&frame).expect("must encode");
+
+        assert_eq!(
+            bmp.len() - BMP_HEADER_BYTES,
+            frame.pixels().len(),
+            "a BMP that is not exactly the raw pixels means work is being done per pixel"
+        );
     }
 
     #[test]
