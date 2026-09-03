@@ -6,22 +6,37 @@
     <!--
       A SEPARATE entry point, on purpose.
 
-      This document must not load React, the design tokens or anything else the
-      application window carries. Two reasons, and the second is the one that
-      matters:
+      This document must not load React, the component layer or the application
+      window's stylesheet. Two reasons, and the second is the one that matters:
 
       1. It pollutes the measurement. Lot 1d asks how long it takes to paint a
          frozen screen; a bundle that boots a framework first answers a
          different question.
-      2. It pollutes the product. The veil has no state, no theme, no
-         interaction beyond one key. Anything it loads is weight paid on every
-         capture, for ever.
+      2. It pollutes the product. The veil has no state and no theme. Anything
+         it loads is weight paid on every capture, for ever.
 
-      The style block below is inline because the veil has exactly six rules and
-      a separate stylesheet would be one more request between the shortcut and
-      the image. `style-src` already allows 'unsafe-inline'; no CSP change is
-      needed for it.
+      THE DESIGN TOKENS ARE THE EXCEPTION - and an earlier version of this
+      comment forbade them, which was wrong. `src/design/tokens.css` is linked
+      below, and it costs the budget nothing for the same reason this window
+      exists at all: the veil window is PREHEATED at startup
+      (src-tauri/src/veil.rs), so this document is parsed and this stylesheet is
+      fetched, resolved and applied seconds before any shortcut is pressed. At
+      capture time the custom properties are already computed values.
+
+      The alternative was to retype --veil-scrim, --veil-stroke-light,
+      --veil-stroke-dark, --veil-stroke-width, --veil-handle and
+      --veil-handle-size here. That is exactly the second list of colours
+      tokens.css opens by forbidding - and worse than usual, because
+      scripts/check-contrast.mjs measures the ORIGINALS: a copy here would drift
+      away from the file that is checked, and the build would keep saying the
+      contrast is fine about values this page no longer uses.
+
+      The rules below are inline rather than a second stylesheet: they are
+      specific to this document and a separate file would be one more request.
+      `style-src` already allows 'unsafe-inline'; no CSP change is needed, and
+      the linked token file is served from 'self', which `default-src` covers.
     -->
+    <link rel="stylesheet" href="/src/design/tokens.css" />
     <style>
       html,
       body {
@@ -32,6 +47,16 @@
            violent than a black one. */
         background: #000;
         overflow: hidden;
+      }
+
+      body {
+        /* The one thing that says "you are choosing a rectangle" before any
+           pixel is dimmed. A cursor costs nothing to paint. */
+        cursor: crosshair;
+        /* A drag here draws a rectangle. It must not start a text selection,
+           and it must not start the native drag of the image below. */
+        user-select: none;
+        -webkit-user-select: none;
       }
 
       /* The frozen screen is captured at the monitor's PHYSICAL pixel size, and
@@ -45,15 +70,140 @@
         height: 100vh;
         object-fit: fill;
         display: block;
+        /* The image never answers the pointer: that kills WebView2's native
+           image drag outright, and every pointer event lands on the document
+           where main.ts listens for it. */
+        pointer-events: none;
       }
 
       #frame[hidden] {
         display: none;
       }
+
+      /*
+       * THE SELECTION. One element carries the whole overlay: the two-tone
+       * edge AND the scrim over everything outside it, as three box-shadows.
+       *
+       * It exists in the document from startup, hidden. Nothing is constructed
+       * at capture time.
+       *
+       * NOTE ON THE BUDGET - deliberate, and worth re-reading before "fixing"
+       * it: this element is `hidden` until the first pointer press, so the veil
+       * as PAINTED is what it was before this lot: one image, no blending
+       * layer. The scrim appears when the user starts choosing, which is after
+       * the paint and outside the 150 ms. Dimming the whole screen from the
+       * moment the veil appears would be defensible product design, and it
+       * would put a full-screen alpha blend inside the very interval lot 1d
+       * measures. It is one line away (`display: block` and no `hidden`) if a
+       * measurement ever shows that blend to be free.
+       */
+      #selection {
+        position: fixed;
+        /* Overwritten by main.ts on every pointer move. Declared so the element
+           has a defined geometry rather than `auto` before the first drag. */
+        left: 0;
+        top: 0;
+        width: 0;
+        height: 0;
+        box-shadow:
+          /* The white hairline, just inside the selected rectangle. */
+          inset 0 0 0 var(--veil-stroke-width) var(--veil-stroke-light),
+          /* The black one, immediately outside it. The PAIR is the signature
+             and is not decorative: over a backdrop whose content is unknown,
+             the better of the two strokes never drops below 4.58:1 (swept in
+             scripts/check-contrast.mjs). A single colour is unreadable on some
+             screenshots, whichever colour is chosen. */
+            0 0 0 var(--veil-stroke-width) var(--veil-stroke-dark),
+          /* Everything outside, dimmed. An outer box-shadow is clipped to
+             OUTSIDE the border box, so the selected pixels stay exactly as they
+             were captured - which is what the user is judging. 100vmax covers
+             the largest screen dimension from any position on the screen. */
+            0 0 0 100vmax var(--veil-scrim);
+        /* The rectangle must not intercept the drag that is drawing it. */
+        pointer-events: none;
+        /* No `display` declared here on purpose, so the UA's
+           `[hidden] { display: none }` does its job unaided - unlike #frame
+           above, which needs its own rule because it declares `display: block`. */
+      }
+
+      /*
+       * The eight handles. Accent fill wearing the same two-tone stroke, so
+       * they stay findable over any pixel a screenshot happens to contain.
+       *
+       * 1e DRAWS them; it does not make them draggable. Resizing a selection is
+       * not in this lot, and that is stated here rather than left for a user to
+       * discover by pulling on one.
+       */
+      .handle {
+        position: absolute;
+        width: var(--veil-handle-size);
+        height: var(--veil-handle-size);
+        background: var(--veil-handle);
+        border-radius: var(--radius-pill);
+        box-shadow:
+          inset 0 0 0 var(--veil-stroke-width) var(--veil-stroke-light),
+          0 0 0 var(--veil-stroke-width) var(--veil-stroke-dark);
+        /* Half the handle, in every direction: whichever edge or midpoint a
+           handle is pinned to, this centres it ON that point. One rule for all
+           eight, instead of eight sets of offsets. */
+        margin: calc(var(--veil-handle-size) / -2);
+        pointer-events: none;
+      }
+
+      .handle-nw,
+      .handle-n,
+      .handle-ne {
+        top: 0;
+      }
+
+      .handle-sw,
+      .handle-s,
+      .handle-se {
+        bottom: 0;
+      }
+
+      .handle-nw,
+      .handle-w,
+      .handle-sw {
+        left: 0;
+      }
+
+      .handle-ne,
+      .handle-e,
+      .handle-se {
+        right: 0;
+      }
+
+      .handle-n,
+      .handle-s {
+        left: 50%;
+      }
+
+      .handle-w,
+      .handle-e {
+        top: 50%;
+      }
     </style>
   </head>
   <body>
     <img id="frame" alt="" hidden />
+    <!--
+      After the image in document order, which is what puts it on top: both are
+      `position: fixed` and neither carries a z-index, so paint order is
+      document order. No layer token is borrowed to restate what the markup
+      already says - --layer-veil is about this WINDOW against the application,
+      not about two elements inside it.
+    -->
+    <div id="selection" hidden>
+      <span class="handle handle-nw"></span>
+      <span class="handle handle-n"></span>
+      <span class="handle handle-ne"></span>
+      <span class="handle handle-w"></span>
+      <span class="handle handle-e"></span>
+      <span class="handle handle-sw"></span>
+      <span class="handle handle-s"></span>
+      <span class="handle handle-se"></span>
+    </div>
     <script type="module" src="/src/veil/main.ts"></script>
   </body>
 </html>

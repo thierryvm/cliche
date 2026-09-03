@@ -5,6 +5,7 @@
 
 pub mod capture;
 mod displays;
+pub mod geometry;
 mod shortcut;
 pub mod timing;
 pub mod veil;
@@ -32,6 +33,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             displays::describe_displays,
             veil::veil_painted,
+            veil::veil_selected,
             veil::veil_dismissed,
         ])
         .setup(|app| {
