@@ -4,6 +4,7 @@
 //! can be exercised by `cargo test` without starting an event loop.
 
 mod displays;
+pub mod timing;
 
 pub use displays::{collect_displays, describe_displays, summarize, DisplayInfo};
 

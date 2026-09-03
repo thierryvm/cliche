@@ -145,7 +145,11 @@ glisser un rectangle → PNG dans le presse-papier.
 
 **Fini quand** :
 
-1. **Latence** : 10 mesures raccourci → voile visible, **médiane < 150 ms**, journalisées.
+1. **Latence** : **20** mesures raccourci → voile visible, **médiane < 150 ms**, plus
+   le p95, journalisées. *Relevé le 3 sept. en écrivant l'instrument : 10 suffit
+   pour une médiane, mais avec la méthode du rang le plus proche `ceil(0,95 × 10) = 10`,
+   donc sur 10 runs le p95 EST le maximum et n'apprend rien de plus que « le pire de
+   dix ». Le seuil monte à 20 pour que le p95 soit un percentile et pas une décoration.*
 2. **Pixel exact** : capture d'une mire de dimensions connues ; le PNG obtenu a
    exactement les dimensions du rectangle tracé, à 0 pixel près.
 3. **Presse-papier** : l'image se colle dans **Paint** et dans **Discord**.
