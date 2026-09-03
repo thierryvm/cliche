@@ -3,6 +3,7 @@
 //! The application logic lives in this library rather than in `main.rs` so it
 //! can be exercised by `cargo test` without starting an event loop.
 
+pub mod capture;
 mod displays;
 mod shortcut;
 pub mod timing;
