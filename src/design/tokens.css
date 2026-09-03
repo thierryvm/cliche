@@ -15,7 +15,12 @@
  *   Signature    Warm neutrals (darkroom black, baryta paper) crossed by ONE
  *                cold accent — the light a screen throws into a dark room. The
  *                accent is rare: primary action, active state, focus ring, and
- *                the selection handles. Nowhere else.
+ *                the veil's drag handles. Nowhere else. CORRECTED 4 September
+ *                2026: those handles were REMOVED from the veil - they looked
+ *                draggable and resized nothing, and PRD case 6 answers a bad
+ *                rectangle with Escape and a redraw. --veil-handle and
+ *                --veil-handle-size now have no user; they stay for the task
+ *                that will make resizing real.
  *
  * FONTS ARE LOCAL, DELIBERATELY
  *   src-tauri/tauri.conf.json ships no `font-src`, so the webview falls back to
@@ -117,7 +122,8 @@
    * Chosen for a content reason, not a mood: the selection edge must stay
    * visible over BOTH a dark code screenshot and a white document, which a
    * deep blue does not do. Used for: primary action, active state, focus
-   * ring, selection handles. Nothing else.
+   * ring, and the veil's drag handles once they exist again. Nothing else.
+   * Those handles were removed on 4 September 2026 - see the header.
    * ------------------------------------------------------------------ */
 
   --accent: #0b6b7d;
@@ -248,7 +254,10 @@
   --radius-sm: 4px; /* input fields, checkboxes, small square controls */
   --radius-md: 8px; /* buttons, library thumbnails */
   --radius-lg: 14px; /* glass panels — a lens has a thick edge */
-  --radius-pill: 999px; /* status dots, the round tools of the veil */
+  --radius-pill: 999px; /* status dots. It also read "the round tools of the
+                           veil" until 4 September 2026, when the veil's
+                           decorative handles were removed. No veil element
+                           uses this radius today. */
 
   /* ------------------------------------------------------------------ *
    * TYPOGRAPHY

@@ -45,6 +45,29 @@
  * deliberate choice: a double `requestAnimationFrame` would be closer to true
  * presentation but would add a whole frame of the page's own scheduling to
  * every measurement.
+ *
+ * ## The edge frame is inside that acknowledgement, and this is why
+ *
+ * veil.html draws a 4 px two-tone band round the screen, so that a veil which
+ * is a pixel-exact copy of the desktop can still be told from the desktop. A
+ * decoration that appeared AFTER the acknowledgement would be worse than no
+ * decoration: its cost would fall outside the figure, and the next measurement
+ * would under-report by exactly the thing that was added.
+ *
+ * It cannot. The band is static markup (`#edge`) wearing static CSS, in the
+ * document since the window was preheated, touched by no code in this file. Any
+ * frame the compositor builds after parse therefore contains it, including the
+ * one this acknowledgement is scheduled inside.
+ *
+ * What is REASONED rather than measured is the cost, and it is worth naming
+ * precisely. `#edge` triggers nothing that would promote it to a compositor
+ * layer of its own - no transform, no opacity, no will-change - so it rasterises
+ * with everything else in the root layer, and unhiding the image invalidates the
+ * tiles the band lives in too. That is how Blink is understood to work; it is
+ * not a reading taken on this machine. NOBODY HAS MEASURED THIS BAND. If the
+ * band ever did end up on its own layer, its raster would happen once at preheat
+ * and the 150 ms figure would silently stop containing it - the failure would be
+ * a flattering number, not a visible bug, which is the kind that survives.
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -68,6 +91,7 @@ declare global {
 
 const frame = document.getElementById('frame');
 const selection = document.getElementById('selection');
+const edge = document.getElementById('edge');
 
 // Not a defensive nicety: without these nodes there is nothing to paint and
 // nothing to draw on, and the failure would otherwise surface as an
@@ -78,6 +102,16 @@ if (!(frame instanceof HTMLImageElement)) {
 }
 if (!(selection instanceof HTMLElement)) {
   throw new Error('Cannot run the veil: #selection is missing from veil.html');
+}
+// #edge is read here and nowhere else, and that is the point. It is the band
+// that tells the user the veil is open at all; deleted by a later edit it would
+// take no test and no error with it, and the defect of 4 September 2026 - a
+// veil indistinguishable from the desktop it covers - would simply come back in
+// silence. This repo has no DOM test runner, so a throw at load is the only
+// assertion available. It fires during the preheat, before any shortcut, and
+// therefore outside the 150 ms budget.
+if (!(edge instanceof HTMLElement)) {
+  throw new Error('Cannot run the veil: #edge is missing from veil.html');
 }
 
 /**
