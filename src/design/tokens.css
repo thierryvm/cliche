@@ -1,0 +1,433 @@
+/*
+ * Cliché — design tokens. THE single source of truth for the visual system.
+ *
+ * Nothing here may be copied into TypeScript. A second list of the same colours
+ * always drifts from the first; the version-drift test in scripts/ exists
+ * because that already happened once in this repo, for the version number.
+ *
+ * WHAT DECIDES THIS SYSTEM
+ *   Subject      Local screen capture on Windows 11. The screens it eats contain
+ *                secrets: tokens, e-mail addresses, client names. The product is
+ *                a darkroom — nothing leaves the machine.
+ *   Reference    CleanShot X (macOS), for its floating toolbar laid OVER the
+ *                captured image instead of claiming the whole window. That is
+ *                also what earns the glass: something real moves behind it.
+ *   Signature    Warm neutrals (darkroom black, baryta paper) crossed by ONE
+ *                cold accent — the light a screen throws into a dark room. The
+ *                accent is rare: primary action, active state, focus ring, and
+ *                the selection handles. Nowhere else.
+ *
+ * FONTS ARE LOCAL, DELIBERATELY
+ *   src-tauri/tauri.conf.json ships no `font-src`, so the webview falls back to
+ *   `default-src 'self'`. An @import of a web font would be BLOCKED by the CSP,
+ *   and would break the product's central promise. System stacks only. Windows
+ *   11 ships Segoe UI Variable in three optical sizes, which gives a display /
+ *   text pairing without downloading anything.
+ *
+ * CONTRAST IS MEASURED, AND RE-MEASURED
+ *   Every ratio quoted below is recomputed from THIS FILE by
+ *   `scripts/check-contrast.mjs`, which runs on `pnpm test` and in CI. 139
+ *   pairings, WCAG 2.x relative luminance, alpha composited onto an explicit
+ *   backdrop before measuring. A ratio typed into a comment is a claim about
+ *   the day it was typed; the script is what keeps it true afterwards, and it
+ *   FAILS the build rather than warn. Rules that fell out of the measurement,
+ *   and that lot D2 must respect, are `RULE:` comments next to their token.
+ *
+ *   What the script does NOT prove: it measures the declared values, not the
+ *   pixels the webview paints. Colour management, a display profile, or Mica
+ *   showing through a transparent body can all move the result. Checking that
+ *   on a running window is a lot D2 job and has not been done.
+ *
+ * WIDTH BUDGET — the window's declared minimum is 480 x 600 (tauri.conf.json).
+ *   480 - (2 x --gutter) = 448 px of content. Checked against that budget:
+ *   a 5-button toolbar (5 x 44 + 4 x 8 = 252), a two-column thumbnail grid
+ *   (2 x 212 + 24 = 448). These are arithmetic, not measurements: NO TEXT HAS
+ *   BEEN MEASURED IN A RUNNING WEBVIEW. Any character-count budget is a guess
+ *   until lot D2 opens the showcase at 480 px and looks.
+ */
+
+:root {
+  /* ------------------------------------------------------------------ *
+   * SURFACES — four stacked layers, warm neutrals (hue ~40, desaturated)
+   * ------------------------------------------------------------------ */
+
+  /* Window backdrop, used ONLY when the Mica material is unavailable.
+     RULE: while window-vibrancy is in play the document body stays
+     transparent, otherwise an opaque body would hide Mica entirely. */
+  --bg-window: #efebe4;
+
+  /* The default plane: panels, list rows, cards, input fields. */
+  --surface: #f8f5f0;
+
+  /* One step above --surface: menus, popovers, dialogs, the sheet that
+     covers content. The only layer allowed to cast --elev-2 or more. */
+  --surface-raised: #fffdfa;
+
+  /* Fill of a control that exists but cannot be used right now. */
+  --surface-inert: #ede9e2;
+
+  /* The row, tile or tool that IS the current selection. Opaque on purpose:
+     an alpha wash would change ratio with whatever sits underneath. */
+  --surface-selected: #dce4e2;
+
+  /* ------------------------------------------------------------------ *
+   * TEXT
+   * ------------------------------------------------------------------ */
+
+  /* Everything the user reads to act: labels, values, body copy. */
+  --text: #1c1917;
+
+  /* Second rank on the same line: units, timestamps, pixel facts, the
+     sentence under a title. Never the only place an answer appears. */
+  --text-muted: #57504a;
+
+  /* Text of a disabled control. Below 4.5:1 by design — WCAG 1.4.3 exempts
+     inactive components — so per PRD A4 the disabled state must ALSO carry a
+     non-colour cue (aria-disabled, no hover, not focusable).
+     Measured on the opaque surfaces: 2.73:1 to 4.11:1 across both themes.
+     RULE: never on glass. Worst case there is 2.22:1 (dark theme, over a
+     white screenshot), which is unreadable rather than merely quiet. */
+  --text-inert: #8a827a;
+
+  /* Text laid on any filled accent or semantic swatch. One token covers all
+     four fills because the accent and the semantics were chosen to sit on the
+     same side of the luminance line within a theme. */
+  --text-on-solid: #ffffff;
+
+  /* ------------------------------------------------------------------ *
+   * LINES
+   * ------------------------------------------------------------------ */
+
+  /* Decorative separator between rows of the same kind. Deliberately quiet:
+     1.33:1 on --surface, and 1.01:1 to 1.52:1 across all five surfaces and
+     both themes. It groups, it does not delimit a control.
+     RULE: nowhere near a control boundary — at these ratios it cannot be seen
+     by someone who needs the 3:1 of WCAG 1.4.11. Use --border-strong. */
+  --border: #dcd6cc;
+
+  /* The visible boundary of a control — input field, unfilled button,
+     checkbox. Clears the 3:1 of WCAG 1.4.11 against all five surfaces in both
+     themes; the tightest pair is 3.02:1, on --surface-selected in dark.
+     RULE: that 0.02 is the whole margin. Moving --surface-selected, in either
+     theme, breaks this token before it breaks anything visible. */
+  --border-strong: #877f76;
+
+  /* ------------------------------------------------------------------ *
+   * ACCENT — one hue, ~192 deg. The cold light of a screen in a dark room.
+   * Chosen for a content reason, not a mood: the selection edge must stay
+   * visible over BOTH a dark code screenshot and a white document, which a
+   * deep blue does not do. Used for: primary action, active state, focus
+   * ring, selection handles. Nothing else.
+   * ------------------------------------------------------------------ */
+
+  --accent: #0b6b7d;
+
+  /* Pointer over the control. Darkens in light theme, lightens in dark: in
+     both cases the fill moves AWAY from --text-on-solid, so the ratio rises
+     rather than falls. */
+  --accent-hover: #095a69;
+
+  /* Control held down. */
+  --accent-active: #074956;
+
+  /* ------------------------------------------------------------------ *
+   * SEMANTIC — each is an employment, not a feeling.
+   * PRD A4: none of these may be the only carrier of the information.
+   * ------------------------------------------------------------------ */
+
+  /* A capture failed, a shortcut was refused, a file could not be written.
+     PRD R2/R4: the message names what failed. */
+  --danger: #a3251b;
+
+  /* The action will succeed but destroys something: masking burns the pixels
+     into the delivered file (PRD C-g), retention will delete captures. */
+  --warning: #7a5200;
+
+  /* The image reached the clipboard, the file was written, the mask was
+     applied. Confirmation of a finished act. */
+  --success: #2c6b3f;
+
+  /* ------------------------------------------------------------------ *
+   * GLASS — the material of the floating toolbar over a capture.
+   * Split into tint + alpha so the two fallbacks below can neutralise it
+   * without knowing which theme is active.
+   * RULE: at most 3 glass surfaces per screen, never inside a list, never
+   * glass over glass, never over an area that scrolls whole. Each
+   * backdrop-filter forces a composited layer redrawn every frame.
+   * ------------------------------------------------------------------ */
+
+  /* The tint, as raw channels so alpha can be swapped independently. */
+  --glass-tint: 255 253 250;
+
+  /* 0.80 is not a taste, and the binding case is NOT the one you expect.
+     The pair under pressure is --text-muted on glass. Measured floors, i.e.
+     the lowest alpha still clearing 4.5:1:
+
+         light theme   0.771   worst backdrop: pure BLACK  (dark screenshot)
+         dark theme    0.787   worst backdrop: pure WHITE  (a white document)
+
+     The dark theme binds, and it binds over WHITE: its tint is near-black, so
+     letting a white page through is what washes the panel out. Over black the
+     same dark glass measures 8.97:1 and is in no danger at all. Reasoning from
+     "dark terminal = worst case" gives the wrong answer in this theme.
+
+     RULE: 0.80 leaves 0.013 of alpha above the floor. That is the entire
+     margin. Lowering this value, or lightening --glass-tint in dark, breaks
+     --text-muted on glass -- scripts/check-contrast.mjs fails when it does. */
+  --glass-alpha: 0.8;
+
+  /* The composed tint. Assemble in the token layer so lot D2's .glass class
+     needs no @supports of its own. */
+  --glass-bg: rgb(var(--glass-tint) / var(--glass-alpha));
+
+  /* Blur radius. What actually reads as glass; the tint alone is a veil. */
+  --glass-blur: 24px;
+
+  /* Saturation lift, so colours behind stay colours and do not go milky. */
+  --glass-saturate: 150%;
+
+  /* The thin lit edge that separates the panel from what it floats over. */
+  --glass-border: rgb(255 255 255 / 0.55);
+
+  /* The highlight along the top edge — inset, one pixel. Apple's refraction
+     approximated honestly: a second edge gradient, not a shader. */
+  --glass-sheen: rgb(255 255 255 / 0.7);
+
+  /* ------------------------------------------------------------------ *
+   * CAPTURE VEIL — the overlay drawn over the user's real desktop during
+   * selection. It is NOT themed: what sits behind is their screen, not our
+   * surfaces. Same values in both themes, on purpose.
+   * ------------------------------------------------------------------ */
+
+  /* The dimming scrim over everything not selected. */
+  --veil-scrim: rgb(0 0 0 / 0.45);
+
+  /* THE SIGNATURE. The selection edge is a two-tone stroke: one white hairline
+     doubled by one black hairline. Neither colour is chosen for looks — the
+     pair is the only construction that is guaranteed legible over a screen
+     whose content is unknown. Swept over every backdrop luminance from 0 to 1,
+     the better of the two strokes never drops below 4.58:1 — the low point is
+     at luminance 0.179, where the two strokes measure the same. That sweep is
+     in scripts/check-contrast.mjs, not in prose. */
+  --veil-stroke-light: #ffffff;
+  --veil-stroke-dark: #000000;
+  --veil-stroke-width: 1px;
+
+  /* The eight drag handles. Accent fill, wearing the same two-tone stroke, so
+     they stay findable over any pixel. */
+  --veil-handle: var(--accent);
+  --veil-handle-size: 0.5rem;
+
+  /* ------------------------------------------------------------------ *
+   * SPACING — base unit 4 px, and its multiples. Unequal by construction:
+   * equal gaps say nothing counts more than anything else.
+   * ------------------------------------------------------------------ */
+
+  --space-1: 0.25rem; /* 4px  — icon to its label, inside one control */
+  --space-2: 0.5rem; /* 8px  — between sibling controls of a toolbar */
+  --space-3: 0.75rem; /* 12px — padding inside a button or a list row */
+  --space-4: 1rem; /* 16px — between two elements of the same block */
+  --space-5: 1.5rem; /* 24px — between two blocks */
+  --space-6: 2rem; /* 32px — between two sections */
+  --space-7: 3rem; /* 48px — around an empty state, which needs the air */
+
+  /* Window edge padding. 16 px each side leaves 448 px at the declared
+     minimum width of 480 px. Every layout budget starts from that number. */
+  --gutter: var(--space-4);
+
+  /* Minimum hit target, 44 px. Windows laptops are touch machines and this
+     app is driven under time pressure. WCAG 2.2 floors at 24; 44 is Apple's
+     figure and the one that matches a thumb.
+     RULE: applies to anything clickable, including icon-only buttons. */
+  --hit-min: 2.75rem;
+
+  /* ------------------------------------------------------------------ *
+   * RADII — four values, four jobs. Not one radius everywhere.
+   * ------------------------------------------------------------------ */
+
+  --radius-sm: 4px; /* input fields, checkboxes, small square controls */
+  --radius-md: 8px; /* buttons, library thumbnails */
+  --radius-lg: 14px; /* glass panels — a lens has a thick edge */
+  --radius-pill: 999px; /* status dots, the round tools of the veil */
+
+  /* ------------------------------------------------------------------ *
+   * TYPOGRAPHY
+   * The root font-size is deliberately NOT set here: it stays at the
+   * browser/OS default so Windows text scaling reaches this app. Sizes below
+   * are rem against a 16 px root.
+   * ------------------------------------------------------------------ */
+
+  /* Body and UI. Segoe UI Variable Text is the optical size Windows 11 draws
+     small text with; the rest of the stack is the fallback for Windows 10 and
+     for any non-Windows machine a developer opens this on. */
+  --font-text:
+    'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui,
+    sans-serif;
+
+  /* Display optical size, for --size-title only. Same family, wider spacing
+     and thinner hairlines by design — a second role without a second font. */
+  --font-display:
+    'Segoe UI Variable Display', 'Segoe UI Variable', 'Segoe UI', system-ui,
+    sans-serif;
+
+  /* Coordinates, dimensions, scale factors, file sizes. The product's whole
+     vocabulary is numeric and columns of digits must line up.
+     Cascadia Mono ships with Windows 11. */
+  --font-numeric: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+
+  /* Four sizes, constant ratio 1.25. Adding a fifth for one screen is how a
+     scale dies. */
+  --size-caption: 0.8rem; /* 12.8px — pixel facts, units, timestamps */
+  --size-body: 1rem; /* 16px   — everything the user reads to act */
+  --size-section: 1.25rem; /* 20px   — a section heading, or a figure shown off */
+  --size-title: 1.5625rem; /* 25px   — the window title. One per window. */
+
+  /* Two weights. A third exists in the variable font and is not used: three
+     weights make hierarchy from thickness instead of from space. */
+  --weight-regular: 400;
+  --weight-semibold: 600; /* headings, the label of the primary action */
+
+  --leading-tight: 1.25; /* titles and headings — they are short */
+  --leading-normal: 1.5; /* body copy */
+  --leading-numeric: 1.2; /* stacked digit rows, so columns stay dense */
+
+  /* Only for the small uppercase section label. Uppercase without tracking
+     sets too tight; nothing else in this system is uppercase. */
+  --tracking-label: 0.06em;
+
+  /* ------------------------------------------------------------------ *
+   * ELEVATION — three steps and a flat zero. Same shadow on everything is
+   * the surest sign nothing was decided.
+   * ------------------------------------------------------------------ */
+
+  --elev-0: none; /* laid flat: list rows, fields, sections */
+  --elev-1: 0 1px 2px rgb(28 25 23 / 0.1); /* library card at rest */
+  --elev-2: 0 4px 12px rgb(28 25 23 / 0.14); /* menus, popovers, tooltips */
+  --elev-3: 0 12px 32px rgb(28 25 23 / 0.28); /* glass panel, modal dialog */
+
+  /* ------------------------------------------------------------------ *
+   * MOTION
+   * ------------------------------------------------------------------ */
+
+  --dur-instant: 90ms; /* a control answering the pointer */
+  --dur-short: 160ms; /* a menu or tooltip appearing */
+  --dur-medium: 240ms; /* a panel sliding, a view changing */
+
+  /* The capture veil NEVER animates in. PRD P1 requires a median under 150 ms
+     from shortcut to visible veil; an entrance transition spends that budget
+     on decoration. Zero in both motion modes, on purpose. */
+  --dur-veil: 0s;
+
+  --ease-out: cubic-bezier(0, 0, 0.2, 1); /* things entering the screen */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1); /* things leaving it */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1); /* things moving, staying visible */
+
+  /* ------------------------------------------------------------------ *
+   * FOCUS — PRD A2: the focused element is visible at all times, in both
+   * themes. The ring is drawn with an offset so that on a filled accent
+   * button it lands on the surface behind, never on the accent itself.
+   * ------------------------------------------------------------------ */
+
+  --focus-ring-color: var(--accent);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* ------------------------------------------------------------------ *
+   * LAYERS — every z-index in this app comes from here. Gaps are wide
+   * enough to insert a plane without renumbering.
+   * ------------------------------------------------------------------ */
+
+  --layer-base: 0; /* ordinary content */
+  --layer-floating: 10; /* the glass toolbar, a lifted card */
+  --layer-menu: 100; /* menus and dropdowns */
+  --layer-dialog: 1000; /* modal dialogs */
+  --layer-tooltip: 2000; /* above dialogs — otherwise useless inside one */
+  --layer-veil: 9000; /* the capture veil. Above everything, always. */
+}
+
+/* ==================================================================== *
+ * DARK THEME — a full theme, not a patch. Every value that changes is
+ * restated; anything absent here is theme-independent by decision.
+ * ==================================================================== */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Darkroom black: warm, not the blue-grey of every default palette. */
+    --bg-window: #141210;
+    --surface: #1e1b18;
+    --surface-raised: #2a2622;
+    --surface-inert: #262320;
+    --surface-selected: #283736;
+
+    --text: #f2eee8;
+    --text-muted: #b8b0a6;
+    --text-inert: #7c756c;
+
+    /* On dark, the fills are the light colours, so the text on them is the
+       window black. Same single token, opposite side. */
+    --text-on-solid: #141210;
+
+    --border: #3a342e;
+    --border-strong: #847c71;
+
+    --accent: #5cc4d8;
+    --accent-hover: #7fd4e4;
+    --accent-active: #9bdeea;
+
+    --danger: #f09a90;
+    --warning: #e5b45c;
+    --success: #77c98c;
+
+    /* Glass tints with the window black rather than the surface: over a white
+       screenshot a darker tint keeps the composite readable at a lower alpha,
+       so the panel still reads as glass instead of as a slab. */
+    --glass-tint: 20 18 16;
+    --glass-border: rgb(255 255 255 / 0.1);
+    --glass-sheen: rgb(255 255 255 / 0.14);
+
+    /* Shadows must work dark-on-dark: same geometry, more opacity, pure black
+       rather than the warm ink used on light. */
+    --elev-1: 0 1px 2px rgb(0 0 0 / 0.5);
+    --elev-2: 0 4px 12px rgb(0 0 0 / 0.6);
+    --elev-3: 0 12px 32px rgb(0 0 0 / 0.72);
+  }
+}
+
+/* ==================================================================== *
+ * FALLBACKS. Both live in the token layer, so lot D2's .glass class gets
+ * them for free and cannot forget them. Both come AFTER the dark theme,
+ * so they win in either theme.
+ * ==================================================================== */
+
+/* No backdrop-filter (old WebView2, some print and preview renderers): the
+   panel goes near-opaque rather than becoming a transparent rectangle.
+   Worst-case text still measured — see the report. */
+@supports not (
+  (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))
+) {
+  :root {
+    --glass-alpha: 0.97;
+    --glass-blur: 0px;
+    --glass-saturate: 100%;
+  }
+}
+
+/* User asked the system for less transparency: no translucency at all. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-alpha: 1;
+    --glass-blur: 0px;
+    --glass-saturate: 100%;
+  }
+}
+
+/* Durations fall to zero. Not "almost zero": zero. Curves are left alone —
+   a curve with no duration costs nothing, and keeping them avoids a second
+   set of tokens that would have to be maintained in parallel. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 0s;
+    --dur-short: 0s;
+    --dur-medium: 0s;
+  }
+}

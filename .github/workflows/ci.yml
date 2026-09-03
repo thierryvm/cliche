@@ -60,6 +60,12 @@ jobs:
       - name: One version, three files
         run: node scripts/check-version.mjs
 
+      # Same class of fact as the version number: something a human copied by
+      # hand into a comment. Recomputed from src/design/tokens.css, so a token
+      # that moves cannot quietly leave a false ratio behind it.
+      - name: Contrast of the design tokens
+        run: node scripts/check-contrast.mjs
+
       - name: TypeScript - strict, zero any
         run: pnpm typecheck
 

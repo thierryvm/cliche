@@ -10,7 +10,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/check-version.mjs && cargo test --manifest-path src-tauri/Cargo.toml",
+    "test": "node scripts/check-version.mjs && node scripts/check-contrast.mjs && cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:contrast": "node scripts/check-contrast.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
