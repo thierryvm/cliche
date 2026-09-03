@@ -1,0 +1,777 @@
+/*
+ * Cliché — component material. Lot D2.
+ *
+ * WHAT THIS FILE IS
+ *   The material every screen is cut from: buttons, icon buttons, fields, the
+ *   glass panel, list rows, library tiles, semantic notes. Nothing here decides
+ *   the system — src/design/tokens.css did that. This file only spends what the
+ *   token file already measured.
+ *
+ * THE ONE LAW
+ *   Every colour, space, radius, shadow and duration below is a var(--…).
+ *   Not a discipline: it is the only way the dark theme, the no-backdrop-filter
+ *   fallback and prefers-reduced-transparency keep working without a single
+ *   @media rule in this file. There are ZERO @media blocks here, on purpose —
+ *   if one appears, a value was hard-coded upstream of it.
+ *
+ * RULES OBEYED, quoted from tokens.css
+ *   --border          decorative, 1.33:1. Separator BETWEEN rows of the same
+ *                     kind only. Never a control boundary → --border-strong.
+ *   --text-inert      never on glass (2.22:1 worst case there). The disabled
+ *                     specimens in the showcase sit on opaque surfaces only.
+ *   --elev-2 and up   reserved to --surface-raised planes (menus, dialogs) and
+ *                     to the glass panel (--elev-3). A button gets --elev-1 or
+ *                     nothing — hence the pressed rule below.
+ *   --hit-min         44 px, anything clickable, icon-only included.
+ *   glass             at most 3 per screen, never inside a list, never over
+ *                     glass. The showcase draws exactly one.
+ *
+ * PRD A4 — no information carried by colour ALONE
+ *   disabled  = dashed boundary (a shape) + `disabled` + no hover response
+ *   selected  = an inset bar / a check badge (a shape) + aria-selected
+ *   error     = a named message and an icon + aria-invalid, not a red edge
+ *
+ * PRD A2 — the focus ring is one rule, shared by every control, drawn with
+ *   --focus-ring-offset so that on a filled accent button it lands on the
+ *   surface behind and never on the accent itself.
+ *
+ * COMPONENT-LAYER CONSTANTS (below): the four values this layer needed that
+ *   the token file does not carry. None of them is a colour, none is theme
+ *   dependent, none is measurable by scripts/check-contrast.mjs. They are
+ *   candidates for promotion into tokens.css — see the lot D2 report.
+ */
+
+:root {
+  /* Boundary of a control, the glass edge, the row separator. One hairline
+     everywhere; a second thickness would be a second decision. */
+  --c-border-width: 1px;
+
+  /* 212 px. Not a new figure: it is the one tokens.css computes for the width
+     budget — 2 x 212 + 24 (--space-5) = 448 = 480 minus two gutters. Used with
+     auto-fill so 480 px yields exactly two columns and a wider window more. */
+  --c-thumb-min: 13.25rem;
+
+  /* Thumbnail frame. A screen capture is landscape; 16/10 is the flattest
+     ratio that still shows a window's title bar and its content. */
+  --c-thumb-aspect: 16 / 10;
+
+  /* The showcase page's own measure. Not a product screen: the app window is
+     480–…, this is a document read on a desktop. */
+  --c-page-max: 64rem;
+}
+
+/* ==================================================================== *
+ * FOCUS — ONE rule for the whole file (PRD A2).
+ * `.is-focus` is a showcase-only class and sits in the SAME rule as
+ * :focus-visible on purpose: the specimen cannot drift from the real
+ * state, because it is not a copy of it.
+ * ==================================================================== */
+
+.c-btn:focus-visible,
+.c-btn.is-focus,
+.c-input:focus-visible,
+.c-input.is-focus,
+.c-row:focus-visible,
+.c-row.is-focus,
+.c-tile:focus-visible,
+.c-tile.is-focus {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ==================================================================== *
+ * BUTTON
+ * ==================================================================== */
+
+.c-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1); /* icon to its label */
+  min-height: var(--hit-min);
+  padding: var(--space-2) var(--space-3);
+  border: var(--c-border-width) solid transparent;
+  border-radius: var(--radius-md);
+  background-color: transparent;
+  box-shadow: var(--elev-0);
+  color: var(--text);
+  font-family: var(--font-text);
+  font-size: var(--size-body);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-tight);
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-instant) var(--ease-standard),
+    border-color var(--dur-instant) var(--ease-standard),
+    box-shadow var(--dur-instant) var(--ease-standard);
+}
+
+/* The label of the primary action is the one semibold in the system. */
+.c-btn--primary {
+  background-color: var(--accent);
+  color: var(--text-on-solid);
+  font-weight: var(--weight-semibold);
+}
+
+.c-btn--primary:hover,
+.c-btn--primary.is-hover {
+  background-color: var(--accent-hover);
+  box-shadow: var(--elev-1);
+}
+
+.c-btn--primary:active,
+.c-btn--primary.is-active {
+  background-color: var(--accent-active);
+  box-shadow: var(--elev-0);
+}
+
+.c-btn--secondary {
+  background-color: var(--surface);
+  border-color: var(--border-strong);
+}
+
+.c-btn--secondary:hover,
+.c-btn--secondary.is-hover {
+  background-color: var(--surface-raised);
+  box-shadow: var(--elev-1);
+}
+
+.c-btn--secondary:active,
+.c-btn--secondary.is-active {
+  background-color: var(--surface-selected);
+  box-shadow: var(--elev-0);
+}
+
+.c-btn--ghost {
+  background-color: transparent;
+}
+
+.c-btn--ghost:hover,
+.c-btn--ghost.is-hover {
+  background-color: var(--surface-raised);
+  box-shadow: var(--elev-1);
+}
+
+.c-btn--ghost:active,
+.c-btn--ghost.is-active {
+  background-color: var(--surface-selected);
+  box-shadow: var(--elev-0);
+}
+
+/* Destructive: outlined at rest, filled under the pointer. A deletion should
+   not look pressable while the pointer is elsewhere — it commits when aimed at.
+   This is also the honest answer to a gap: there is no --danger-hover and no
+   --danger-active token, and inventing one would be an unmeasured colour. The
+   two states this button owns are both already measured (--danger as text on
+   every surface; --text-on-solid on --danger). */
+.c-btn--danger {
+  background-color: var(--surface);
+  border-color: var(--danger);
+  color: var(--danger);
+  font-weight: var(--weight-semibold);
+}
+
+.c-btn--danger:hover,
+.c-btn--danger.is-hover {
+  background-color: var(--danger);
+  color: var(--text-on-solid);
+  box-shadow: var(--elev-1);
+}
+
+.c-btn--danger:active,
+.c-btn--danger.is-active {
+  background-color: var(--danger);
+  color: var(--text-on-solid);
+  box-shadow: var(--elev-0);
+}
+
+/* Pressed flattens, everywhere. A button may not cast --elev-2, so depth is
+   the only channel left to say "held down" once the fill is spent. */
+
+/* Icon-only. --hit-min is a RULE, not a suggestion: this is the control that
+   usually loses it. */
+.c-btn--icon {
+  width: var(--hit-min);
+  min-width: var(--hit-min);
+  height: var(--hit-min);
+  padding: 0;
+}
+
+.c-btn__glyph {
+  display: block;
+  width: var(--space-5);
+  height: var(--space-5);
+  flex: none;
+}
+
+/* Active tool in a toolbar. Accent is allowed here — "active state" is one of
+   its four employments. The inset bar is the non-colour cue (PRD A4), and
+   aria-pressed carries it to assistive tech. */
+.c-btn[aria-pressed='true'] {
+  background-color: var(--surface-selected);
+  box-shadow: inset 0 calc(-1 * var(--space-1)) 0 0 var(--accent);
+}
+
+/* DISABLED IS LAST ON PURPOSE. Same specificity as the variant rules above,
+   so the cascade lets it win without a chain of :not() on every line. The
+   dashed boundary is the non-colour cue PRD A4 asks for; the token comment for
+   --text-inert says the same thing in prose. */
+.c-btn:disabled,
+.c-btn[aria-disabled='true'] {
+  background-color: var(--surface-inert);
+  border-color: var(--border-strong);
+  border-style: dashed;
+  box-shadow: var(--elev-0);
+  color: var(--text-inert);
+  cursor: not-allowed;
+}
+
+/* ==================================================================== *
+ * FIELD
+ * ==================================================================== */
+
+.c-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.c-field__label {
+  color: var(--text-muted);
+  font-size: var(--size-caption);
+  line-height: var(--leading-tight);
+}
+
+.c-input {
+  min-height: var(--hit-min);
+  padding: var(--space-2) var(--space-3);
+  /* --border-strong, never --border: this is a control boundary and WCAG
+     1.4.11 wants 3:1. --border measures 1.33:1 and would vanish. */
+  border: var(--c-border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface);
+  color: var(--text);
+  font-family: var(--font-text);
+  font-size: var(--size-body);
+  line-height: var(--leading-normal);
+}
+
+/* A placeholder is read, so it is --text-muted (measured 4.5:1) and never
+   --text-inert, which is the colour of a control you cannot use. */
+.c-input::placeholder {
+  color: var(--text-muted);
+}
+
+.c-input:focus-visible,
+.c-input.is-focus {
+  border-color: var(--accent);
+}
+
+/* Coordinates, sizes, scale factors: the product's whole vocabulary. */
+.c-input--numeric {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading-numeric);
+}
+
+.c-input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.c-input:disabled {
+  background-color: var(--surface-inert);
+  border-color: var(--border-strong);
+  border-style: dashed;
+  color: var(--text-inert);
+  cursor: not-allowed;
+}
+
+/* The message is what carries the error; the red edge only points at it. */
+.c-field__message {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  font-size: var(--size-caption);
+  line-height: var(--leading-tight);
+  color: var(--text-muted);
+}
+
+.c-field__message--error {
+  color: var(--danger);
+}
+
+.c-field__message .c-btn__glyph {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+/* ==================================================================== *
+ * GLASS — the floating panel laid OVER a capture. Everything it needs is
+ * already in the token layer, fallbacks included: no @supports and no
+ * prefers-reduced-transparency block here, and none is missing.
+ * ==================================================================== */
+
+.c-glass {
+  position: relative;
+  padding: var(--space-4);
+  border: var(--c-border-width) solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  /* --elev-3 outside, the lit top edge inside. One pixel, not a shader. */
+  box-shadow:
+    var(--elev-3),
+    inset 0 var(--c-border-width) 0 var(--glass-sheen);
+  color: var(--text);
+  z-index: var(--layer-floating);
+}
+
+/* The 5-tool toolbar: 5 x 44 + 4 x 8 = 252, plus 2 x 8 of padding = 268.
+   Fits the 448 px content budget of the narrowest window with room to spare.
+   Layout only, deliberately separate from .c-glass: the floating toolbar is
+   `c-glass c-toolbar`, while a toolbar INSIDE a glass panel is `c-toolbar`
+   alone. Glass over glass is forbidden by the token RULE. */
+.c-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+
+.c-glass__title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--size-section);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  opacity: 1;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+/* --text-muted is the pair that binds --glass-alpha. It is allowed here and
+   it is the reason 0.80 exists. --text-inert is NOT allowed here. */
+.c-glass__facts {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-family: var(--font-numeric);
+  font-size: var(--size-caption);
+  line-height: var(--leading-numeric);
+}
+
+/* ==================================================================== *
+ * LIST ROW
+ * ==================================================================== */
+
+.c-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.c-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--hit-min);
+  padding: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  color: var(--text);
+  font-family: var(--font-text);
+  font-size: var(--size-body);
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--dur-instant) var(--ease-standard);
+}
+
+/* --border is decorative and groups rows of the same kind. This is the only
+   place in the file it is allowed to appear. */
+.c-row + .c-row,
+.c-list > * + * > .c-row {
+  border-top: var(--c-border-width) solid var(--border);
+  border-radius: 0;
+}
+
+.c-row:hover,
+.c-row.is-hover {
+  background-color: var(--surface-raised);
+}
+
+/* Selected: fill + a bar on the leading edge. The bar is the shape PRD A4
+   requires; the fill alone would be colour doing the whole job. */
+.c-row[aria-selected='true'] {
+  background-color: var(--surface-selected);
+  box-shadow: inset var(--space-1) 0 0 0 var(--accent);
+}
+
+.c-row__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.c-row__facts {
+  flex: none;
+  color: var(--text-muted);
+  font-family: var(--font-numeric);
+  font-size: var(--size-caption);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading-numeric);
+}
+
+/* ==================================================================== *
+ * LIBRARY GRID
+ * ==================================================================== */
+
+.c-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--c-thumb-min), 1fr));
+  gap: var(--space-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.c-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  border: var(--c-border-width) solid transparent;
+  border-radius: var(--radius-md);
+  background-color: var(--surface);
+  box-shadow: var(--elev-1);
+  color: var(--text);
+  font-family: var(--font-text);
+  text-align: start;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-instant) var(--ease-standard),
+    background-color var(--dur-instant) var(--ease-standard);
+}
+
+.c-tile__frame {
+  position: relative;
+  aspect-ratio: var(--c-thumb-aspect);
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-inert);
+}
+
+.c-tile__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-body);
+}
+
+.c-tile__facts {
+  color: var(--text-muted);
+  font-family: var(--font-numeric);
+  font-size: var(--size-caption);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading-numeric);
+}
+
+.c-tile[aria-selected='true'] {
+  border-color: var(--accent);
+  background-color: var(--surface-selected);
+}
+
+/* The check badge is the non-colour cue: a shape appears where there was none. */
+.c-tile__badge {
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-end: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-5);
+  height: var(--space-5);
+  border-radius: var(--radius-pill);
+  background-color: var(--accent);
+  color: var(--text-on-solid);
+}
+
+.c-tile__badge .c-btn__glyph {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+/* Loading. The pulse is five times --dur-medium, so it inherits the reduced
+   motion rule for free: that token falls to 0s and the animation stops. */
+.c-skeleton {
+  background-color: var(--surface-inert);
+  animation: c-pulse calc(var(--dur-medium) * 5) var(--ease-standard) infinite;
+}
+
+@keyframes c-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* ==================================================================== *
+ * STATES OF A CONTAINER — empty, and failed.
+ * ==================================================================== */
+
+.c-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  /* --space-7 exists for exactly this: an empty state needs the air. */
+  padding: var(--space-7) var(--space-4);
+  border: var(--c-border-width) dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.c-empty__title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--size-section);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  letter-spacing: normal;
+  text-transform: none;
+  opacity: 1;
+}
+
+.c-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--c-border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface);
+  color: var(--text);
+  font-size: var(--size-body);
+  line-height: var(--leading-normal);
+}
+
+/* Each semantic keeps its own word AND its own glyph in the markup — the
+   border colour is the third cue, not the first. */
+.c-note--danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.c-note--warning {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.c-note--success {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.c-note .c-btn__glyph {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  margin-block-start: var(--space-1);
+}
+
+/* ==================================================================== *
+ * SHOWCASE SCAFFOLDING — the page at #/systeme, and nothing else. Kept in
+ * this file so no fifth stylesheet appears; every class is still .c-.
+ * ==================================================================== */
+
+.c-showcase {
+  /* --bg-window is the token for "no Mica behind us", which is exactly a
+     browser tab. It is set HERE and not on body: the product's body must stay
+     transparent for window-vibrancy. */
+  min-height: 100dvh;
+  padding: var(--gutter);
+  background-color: var(--bg-window);
+  color: var(--text);
+  font-family: var(--font-text);
+  font-size: var(--size-body);
+  line-height: var(--leading-normal);
+}
+
+.c-showcase__inner {
+  max-width: var(--c-page-max);
+  margin-inline: auto;
+}
+
+.c-showcase__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--size-title);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.c-showcase__lede {
+  margin: var(--space-2) 0 0;
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.c-section {
+  margin-block-start: var(--space-6);
+}
+
+.c-section__label {
+  margin: 0 0 var(--space-4);
+  color: var(--text-muted);
+  font-family: var(--font-text);
+  font-size: var(--size-caption);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-label);
+  line-height: var(--leading-tight);
+  text-transform: uppercase;
+  opacity: 1;
+}
+
+.c-specimens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-5) var(--space-4);
+}
+
+.c-specimen {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.c-specimen--wide {
+  flex: 1 1 100%;
+}
+
+/* The token name under every block. Monospace because it is a value, not prose. */
+.c-caption {
+  margin: 0;
+  color: var(--text-muted);
+  font-family: var(--font-numeric);
+  font-size: var(--size-caption);
+  line-height: var(--leading-numeric);
+}
+
+.c-panel {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background-color: var(--surface);
+}
+
+.c-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.c-scale__sample {
+  margin: 0;
+  color: var(--text);
+  line-height: var(--leading-tight);
+}
+
+/* The contrasted band under the glass. The two halves are the two backdrops
+   scripts/check-contrast.mjs brackets glass against: pure black and pure
+   white. Those two values already exist as --veil-stroke-dark and
+   --veil-stroke-light, which are theme-INDEPENDENT by decision — the only
+   tokens in the system that stay the same extremes in both themes, which is
+   precisely what this demonstration needs. No new colour was created. */
+.c-band {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding: var(--space-6) var(--space-4);
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  isolation: isolate;
+}
+
+.c-band__half {
+  position: absolute;
+  inset-block: 0;
+  width: 50%;
+  z-index: var(--layer-base);
+}
+
+.c-band__half--dark {
+  inset-inline-start: 0;
+  background-color: var(--veil-stroke-dark);
+}
+
+.c-band__half--light {
+  inset-inline-end: 0;
+  background-color: var(--veil-stroke-light);
+}
+
+/* Something for saturate() to bite on, and a texture the blur can smear —
+   a flat backdrop cannot tell you whether backdrop-filter ran at all. */
+.c-band__pinstripe {
+  position: absolute;
+  inset: 0;
+  z-index: var(--layer-base);
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--accent) 0 var(--space-1),
+    transparent var(--space-1) var(--space-6)
+  );
+}
+
+.c-band__caption {
+  position: absolute;
+  inset-block-end: var(--space-2);
+  inset-inline-start: var(--space-2);
+  z-index: var(--layer-floating);
+  margin: 0;
+  /* On the black half, and only ever on it. */
+  color: var(--veil-stroke-light);
+  font-family: var(--font-numeric);
+  font-size: var(--size-caption);
+}
+
+.c-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.c-swatch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.c-swatch__chip {
+  width: var(--space-7);
+  height: var(--space-6);
+  border: var(--c-border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.c-rules {
+  margin: 0;
+  padding-inline-start: var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--size-caption);
+  line-height: var(--leading-normal);
+}
+
+.c-rules code {
+  font-family: var(--font-numeric);
+  color: var(--text);
+}
