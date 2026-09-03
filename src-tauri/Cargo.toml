@@ -58,3 +58,23 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 # No networking crate, no telemetry, no logging backend: this application talks
 # to nobody. Startup diagnostics go to stdout, which `pnpm tauri dev` shows.
+
+# Measuring is the entire point of lot 1, and an unoptimised build makes the
+# instrument lie. Both hot spots are byte loops over 8.29 MB living in
+# DEPENDENCIES, not in code written here: xcap's BGRA->RGBA swap, and the PNG
+# compressor in `image`. Measured on 3 September 2026 in a plain dev build:
+# capture 140.8 ms median, encode_png 917.4 ms median -- against a 150 ms budget
+# for the WHOLE path. Concluding "Tauri does not hold" from those figures would
+# be a false negative of the worst kind: it would move an entire surface to
+# native code for a reason that does not exist.
+#
+# So dependencies compile optimised while THIS crate stays unoptimised and
+# debuggable. Deliberately NOT a release build: it changes nothing about what
+# ships, it stops the instrument from lying about code nobody here wrote.
+#
+# This table must stay at the END of the file. It was first written just above
+# the lot 1 dependencies, which silently moved them INTO the profile table --
+# TOML gives every key after a header to that header -- and the build failed
+# with twelve unrelated-looking errors.
+[profile.dev.package."*"]
+opt-level = 3
