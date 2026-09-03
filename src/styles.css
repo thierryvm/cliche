@@ -4,10 +4,14 @@
 @import './design/tokens.css';
 
 /*
- * Still deliberately plain. Lot D1 delivered the tokens only; the components
- * and the /systeme showcase are lot D2. What changed here is the wiring: the
- * font stack and the two colours that used to be hard-coded now come from
- * src/design/tokens.css, so there is one list, not two.
+ * The home screen's own layer, and nothing else. Every value below is a
+ * var(--…): there is no bare rem, no bare weight and no bare opacity left in
+ * this file, because a number typed here is a number the token file cannot
+ * theme and check-contrast.mjs cannot measure.
+ *
+ * ONE dependency outside tokens.css: --c-border-width, the component layer's
+ * single hairline, declared in src/design/components.css. App.tsx imports that
+ * file for .c-note--danger, so it is always present when this one is.
  */
 
 :root {
@@ -32,25 +36,40 @@ body {
 }
 
 .app {
-  padding: 1.5rem;
+  /* --gutter IS this padding. The 448 px content budget written into
+     tokens.css is computed from it at the window's declared 480 px minimum;
+     the 1.5rem that used to sit here silently spent 32 px of that budget. */
+  padding: var(--gutter);
 }
 
 h1 {
   margin: 0;
-  font-size: 1.6rem;
+  /* One --size-title per window, and --font-display exists for that size
+     alone. Same three declarations as .c-showcase__title — one decision. */
+  font-family: var(--font-display);
+  font-size: var(--size-title);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
 }
 
 .subtitle {
-  margin: 0.25rem 0 1.75rem;
-  opacity: 0.7;
+  margin: var(--space-1) 0 var(--space-6);
+  /* Was `opacity: 0.7`, which is a ratio nothing measures: it moves the text
+     AND whatever it sits on. --text-muted is the token for "the sentence under
+     a title", and check-contrast.mjs holds it at 6.67:1 or better. */
+  color: var(--text-muted);
 }
 
 h2 {
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  /* The small uppercase section label. Deliberately the same declarations as
+     .c-section__label in components.css — including --tracking-label, the
+     only place in the system that is uppercase. */
+  color: var(--text-muted);
+  font-size: var(--size-caption);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-label);
+  line-height: var(--leading-tight);
   text-transform: uppercase;
-  opacity: 0.6;
 }
 
 .displays {
@@ -62,22 +81,29 @@ h2 {
 .display {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  padding: 0.6rem 0;
-  border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  gap: var(--space-1);
+  padding: var(--space-3) 0;
+  /* --border is the decorative separator between rows OF THE SAME KIND, which
+     is exactly this list. The colour-mix it replaces was a fourth line value
+     that no theme and no contrast run knew about. */
+  border-block-start: var(--c-border-width) solid var(--border);
 }
 
 .display-name {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .display-facts {
+  /* Sizes, origins and scale factors: the employment --font-numeric and
+     --size-caption were written for. Second rank on the line, hence
+     --text-muted rather than another opacity. */
+  color: var(--text-muted);
+  font-family: var(--font-numeric);
+  font-size: var(--size-caption);
   font-variant-numeric: tabular-nums;
-  opacity: 0.75;
+  line-height: var(--leading-numeric);
 }
 
-.error {
-  /* The token already carries its own dark-theme value, so the media query
-     that used to live here is gone. */
-  color: var(--danger);
-}
+/* No `.error` rule any more. The failure state is .c-note--danger, the same
+   component the showcase publishes: a frame, a glyph and the word "Failed"
+   carry it, so the colour is no longer the only carrier (PRD A4). */

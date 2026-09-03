@@ -521,6 +521,16 @@
   }
 }
 
+/* A skeleton standing in for a LINE OF TEXT keeps that line's own class, so
+   its height is the text's font-size and line-height rather than a number
+   typed twice. The text stays in the markup — it is what a screen reader
+   reads while aria-busy is true — and is painted out instead of removed. */
+.c-tile__name.c-skeleton,
+.c-tile__facts.c-skeleton {
+  border-radius: var(--radius-sm);
+  color: transparent;
+}
+
 /* ==================================================================== *
  * STATES OF A CONTAINER — empty, and failed.
  * ==================================================================== */
