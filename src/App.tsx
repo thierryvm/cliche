@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react';
 
+import { Glyph, ICON } from './design/Glyph';
 import Showcase from './design/Showcase';
 import { describeDisplays } from './displays';
 import type { DisplayInfo } from './displays';
+
+// This screen renders .c-note--danger, so it depends on the material layer
+// directly. It used to arrive only because Showcase happens to import it —
+// an accident that would break the day the showcase is lazy-loaded.
+import './design/components.css';
 
 /** The design system page, at #/systeme. No router: one hash, one screen. */
 const SHOWCASE_ROUTE = '#/systeme';
@@ -86,10 +92,18 @@ export default function App() {
         <h2 id="displays-heading">Displays detected at startup</h2>
         {probe.status === 'probing' && <p role="status">Reading the monitor list…</p>}
 
+        {/* PRD A4: the red is the THIRD cue, never the first. The word
+            "Failed" and the alert glyph carry the state on their own, which is
+            what .c-note--danger is built for — same component the showcase
+            publishes at #/systeme. A bare red sentence was colour alone. */}
         {probe.status === 'failed' && (
-          <p role="alert" className="error">
-            describe_displays failed: {probe.message}
-          </p>
+          <div role="alert" className="c-note c-note--danger">
+            <Glyph d={ICON.alert} />
+            <span>
+              <strong>Failed</strong> — the monitor list could not be read:{' '}
+              {probe.message}
+            </span>
+          </div>
         )}
 
         {probe.status === 'ready' && (
