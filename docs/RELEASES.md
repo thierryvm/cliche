@@ -31,7 +31,7 @@ work perso -NoCd; node scripts/check-version.mjs          # les 3 versions conco
 work perso -NoCd; pnpm typecheck                          # tsc --noEmit, strict
 work perso -NoCd; cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 work perso -NoCd; cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-work perso -NoCd; pnpm test                               # check-version + cargo test
+work perso -NoCd; pnpm test                               # check-version + check-contrast + cargo test
 work perso -NoCd; pnpm tauri build                        # produit l'installeur NSIS
 ```
 

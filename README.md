@@ -90,13 +90,16 @@ pnpm build       # frontend bundle only
 
 `pnpm test` runs three things in order: `scripts/check-version.mjs`, then
 `scripts/check-contrast.mjs`, then `cargo test --manifest-path
-src-tauri/Cargo.toml`. Both scripts guard the same failure mode — a fact copied
-by hand into a second place, which then drifts. The first fails the build if
-`package.json`, `tauri.conf.json` and `Cargo.toml` ever disagree on the version
-number. The second recomputes every contrast ratio quoted in
-`src/design/tokens.css` from the tokens themselves: 139 pairings, WCAG 2.x, and
-it fails rather than warns. Both are dependency-free and are separate CI steps
-too. A frontend test runner arrives with the shortcut registry, together
+src-tauri/Cargo.toml`. The two scripts check different things, by the same
+method: recompute from the source, then fail rather than warn.
+
+`check-version.mjs` fails the build if `package.json`, `tauri.conf.json` and
+`Cargo.toml` ever disagree on the version number — one fact copied by hand into
+three files. `check-contrast.mjs` recomputes 139 colour pairings from
+`src/design/tokens.css` and fails if any falls under the WCAG ratio its job
+requires; the ratios quoted in that file's comments are quoted *from* this
+computation, which is what stops them becoming decoration. Both are
+dependency-free and are separate CI steps too. A frontend test runner arrives with the shortcut registry, together
 with `tauri-driver` for end-to-end runs (Playwright is not usable here: it
 drives a browser, not a native window).
 
