@@ -189,6 +189,26 @@ coûte plus cher que de la transporter telle quelle.
 La marge est de 27,6 ms sur la médiane. Elle n'est pas confortable : toute étape
 ajoutée entre le raccourci et la peinture se prend dessus.
 
+### Confirmé par Thierry en séance, le 4 septembre 2026 — après 1e et 1f
+
+Deux passes de 20 runs, transport A, sur sa machine, **avec la sélection et le
+presse-papier en place** :
+
+| Passe | TOTAL médiane | TOTAL p95 |
+| --- | --- | --- |
+| 1 | **117,2 ms** | 123,5 ms |
+| 2 | **121,7 ms** | 134,3 ms |
+
+Les étapes ajoutées par 1e et 1f **n'ont rien coûté** : elles arrivent après la
+peinture. Le p95 de la seconde passe, **134,3 ms**, laisse **15,7 ms** de marge —
+c'est le chiffre à surveiller, pas la médiane.
+
+Ce que la même séance a **infirmé** : le voile était **invisible à l'ouverture**.
+Il affiche une copie pixel-exacte de l'écran, donc rien ne distinguait l'état armé.
+Corrigé par un cadre bi-ton au bord de l'écran, dont le coût est **borné par la
+géométrie** (1,15 % des pixels d'un assombrissement plein écran) et **non mesuré** —
+personne n'a encore relancé le banc avec ce cadre.
+
 **Risque n°2** — l'image passée de Rust au webview sature l'IPC. Un plein écran
 1920×1080 en base64 pèse ~8 Mo par capture. *On le verrait à* : la latence du point 1
 qui explose sur les grandes captures. **Parade prévue** : réponse en octets bruts
