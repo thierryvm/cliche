@@ -1,7 +1,23 @@
 import { useEffect, useState } from 'react';
 
+import Showcase from './design/Showcase';
 import { describeDisplays } from './displays';
 import type { DisplayInfo } from './displays';
+
+/** The design system page, at #/systeme. No router: one hash, one screen. */
+const SHOWCASE_ROUTE = '#/systeme';
+
+function useHashRoute(): string {
+  const [hash, setHash] = useState(() => window.location.hash);
+
+  useEffect(() => {
+    const onHashChange = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  return hash;
+}
 
 type Probe =
   | { readonly status: 'probing' }
@@ -18,6 +34,7 @@ function toMessage(error: unknown): string {
 }
 
 export default function App() {
+  const route = useHashRoute();
   const [probe, setProbe] = useState<Probe>({ status: 'probing' });
 
   useEffect(() => {
@@ -42,6 +59,12 @@ export default function App() {
       abandoned = true;
     };
   }, []);
+
+  // After the hooks, never before them: the hook order must not depend on the
+  // route. The display probe still runs here and is simply not shown.
+  if (route === SHOWCASE_ROUTE) {
+    return <Showcase />;
+  }
 
   return (
     <main className="app">
