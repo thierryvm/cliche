@@ -26,5 +26,35 @@ tauri = { version = "2.11.5", features = [] }
 # on serde already; declaring it here is what lets us use the derive macro.
 serde = { version = "1", features = ["derive"] }
 
+# --- Lot 1: the skeleton that MEASURES ---
+# Versions checked against the crates.io API on 3 September 2026.
+
+# The global shortcut is registered from RUST, not from JavaScript. The handler
+# has to run before the webview is involved at all, and the JS counterpart
+# package would add a round trip to the very budget being measured. That is why
+# no `@tauri-apps/plugin-global-shortcut` appears in package.json.
+tauri-plugin-global-shortcut = "2.3.2"
+
+# Writes the captured region to the clipboard, from Rust. Chosen over `arboard`,
+# which has had no release since 23 August 2025 while this one shipped on
+# 31 August 2026. `Clipboard::write_image(&self, image: &Image<'_>)` was read on
+# docs.rs before being relied on here, not assumed.
+tauri-plugin-clipboard-manager = "2.3.3"
+
+# Screen capture. A one-shot API, and cross-platform, which keeps the capture
+# layer behind a seam even though only Windows ships. `windows-capture` aims at
+# continuous capture and costs more to set up; moving to it would be the result
+# of a measurement, never an a-priori choice.
+xcap = "0.9.8"
+
+# Cropping and PNG encoding. Declared explicitly rather than leaned on as a
+# transitive dependency of xcap: xcap requires `image ^0.25`, the same line, so
+# cargo unifies to ONE copy and its RgbaImage is literally our type. A different
+# major line would give two incompatible types with identical names, which is
+# among the least readable errors Rust produces.
+# PNG only: the default feature set pulls jpeg, gif, webp and tiff decoders that
+# a screenshot tool never reads.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
 # No networking crate, no telemetry, no logging backend: this application talks
 # to nobody. Startup diagnostics go to stdout, which `pnpm tauri dev` shows.
