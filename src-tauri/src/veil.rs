@@ -60,6 +60,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 
 use crate::capture::{self, Frame, MARK_CAPTURE};
+use crate::clipboard;
 use crate::geometry::{self, CssRect};
 use crate::timing::Timings;
 
@@ -560,13 +561,21 @@ pub fn veil_painted(app: AppHandle, run: u64) {
 /// primary monitor at startup, the two numbers can differ and the window's is
 /// the one that describes these coordinates.
 ///
-/// # What 1e does with the cut, and what it does not
+/// # What happens to the cut - 1f
 ///
-/// It measures it, reports its size, and drops it. Nothing in this lot consumes
-/// the pixels - the clipboard is 1f. What this command proves is the chain:
+/// It is measured, its size is reported, and then it goes on the system
+/// clipboard. The printed selection line is still the proof of the chain -
 /// a rectangle drawn in CSS pixels becomes an exact rectangle of the capture's
-/// own bytes. The printed line is that proof in a form a human can hold against
-/// what they just dragged on screen.
+/// own bytes - and `clipboard::success_line` is the proof it left the process.
+///
+/// **A click is refused before anything is cut.** The area rule lives in
+/// `clipboard::is_worth_copying`, with the reasoning behind its threshold; it is
+/// applied here, before the crop, so a mis-click consumes no frame, closes no
+/// veil and never reaches the clipboard. That is `docs/PRD.md` case 6.
+///
+/// **Everything the clipboard costs is OUTSIDE the 150 ms budget.** That budget
+/// ends at `painted`, before the user has even started dragging. See
+/// `clipboard::Meter` for the instrument that keeps those figures apart.
 ///
 /// Returns `Result` so that a refusal reaches the page's `catch` instead of
 /// vanishing: a selection that was rejected must not look like one that
@@ -594,6 +603,18 @@ pub fn veil_selected(
         .map_err(|error| format!("could not read the veil window's scale factor: {error}"))?;
 
     let rectangle = geometry::to_physical(CssRect::from_corners(x0, y0, x1, y1)?, scale)?;
+
+    // A click is not a drag. Refused HERE, before the frame is cut and before
+    // the frame is released, so that a mis-click leaves everything as it was:
+    // no crop, no clipboard write, and the veil still up to drag again. Doing it
+    // after the cut would work too, but it would have thrown the frozen frame
+    // away - and then the retry would have nothing to cut.
+    if !clipboard::is_worth_copying(rectangle.width(), rectangle.height()) {
+        return Err(clipboard::too_small_line(
+            rectangle.width(),
+            rectangle.height(),
+        ));
+    }
 
     // Scoped, so the lock is released before anything is printed or any window
     // is touched. Holding it across a call into Tauri would be a deadlock
@@ -642,8 +663,38 @@ pub fn veil_selected(
         eprintln!("[cliche] veil: could not hide the veil after the selection: {error}");
     }
 
-    // `cut` is dropped here. That is 1e's boundary, and it is deliberate rather
-    // than an omission - see this function's doc comment.
+    // The clipboard write comes AFTER the veil is hidden, deliberately: should
+    // it fail, the user is left with their screen back and an error message
+    // rather than with a frozen overlay they have to press Escape to be rid of.
+    // Nothing in the copy needs the window, so the two are independent.
+    //
+    // `?`: a refusal must reach the page's `catch`. A capture that did not make
+    // it to the clipboard has failed, and it must not look like one that worked.
+    let copied = clipboard::copy_selection(&app, &cut)?;
+
+    println!(
+        "{}",
+        clipboard::success_line(
+            run,
+            cut.width(),
+            cut.height(),
+            cut.pixels().len(),
+            copied.elapsed,
+        )
+    );
+
+    // Same batch rule as the paint report, so a measuring session reads the same
+    // way. The header line of this one says why its total is NOT comparable to
+    // the one 1d prints.
+    if crate::shortcut::report_due(copied.copies) {
+        if let Some(meter) = app.try_state::<clipboard::Meter>() {
+            for line in meter.report_lines() {
+                println!("[cliche] {line}");
+            }
+        }
+    }
+
+    // `cut` is dropped here, its bytes now owned by the clipboard.
     Ok(())
 }
 

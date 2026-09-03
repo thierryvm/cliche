@@ -4,6 +4,7 @@
 //! can be exercised by `cargo test` without starting an event loop.
 
 pub mod capture;
+pub mod clipboard;
 mod displays;
 pub mod geometry;
 mod shortcut;
@@ -19,6 +20,11 @@ use timing::Timings;
 /// Builds and runs the application. Returns only when the app exits.
 pub fn run() {
     let result = tauri::Builder::default()
+        // Registered so that `clipboard::copy_selection` finds a `Clipboard` in
+        // managed state. This adds NO capability: the plugin's ACL guards its
+        // `invoke` commands, and nothing here goes through the webview - see the
+        // header of `clipboard.rs`.
+        .plugin(tauri_plugin_clipboard_manager::init())
         // The frozen frame is served from MEMORY on this scheme; nothing is
         // written to disk and nothing leaves the process. On Windows the
         // webview reaches it at `http://cliche.localhost/frame/<n>.bmp`, which
@@ -51,6 +57,13 @@ pub fn run() {
             // instrument up on every press, and the first press can land the
             // instant registration succeeds.
             app.manage(Timings::new());
+
+            // The clipboard step's own instrument, and a SEPARATE type on
+            // purpose: Tauri manages state by type, and these figures must never
+            // be aggregated with the pipeline's - the write happens after the
+            // user's drag, long outside the 150 ms budget. `clipboard.rs`'s
+            // header has the mechanics.
+            app.manage(clipboard::Meter::new());
 
             // The transport is read ONCE, here, and never again: switching
             // between the two candidate routes is a restart with a different
