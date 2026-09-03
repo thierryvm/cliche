@@ -3,6 +3,7 @@
 [![CI](https://github.com/thierryvm/cliche/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/thierryvm/cliche/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/github/package-json/v/thierryvm/cliche?label=version)](https://github.com/thierryvm/cliche/blob/main/package.json)
 [![Platform](https://img.shields.io/badge/platform-Windows%2011-0b7285)](#prerequisites)
+[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-7a5200)](LICENSE.md)
 
 Local screenshot utility for Windows. Capture a region, a window, a whole
 screen, or a web page longer than the screen; annotate it; copy or save it;
@@ -22,6 +23,7 @@ limits `connect-src` to Tauri's own IPC channel.
 | --- | --- |
 | Window starts, per-monitor DPI aware v2 | ✅ done, verified |
 | Display enumeration (physical pixels, scale) | ✅ done, verified on 1 display |
+| Design system: tokens, components, showcase at `#/systeme` | ✅ done, looked at in a browser — not yet in WebView2 |
 | Global shortcut → frozen overlay → region → clipboard | ⏳ next |
 | Window and full-screen capture | ⏳ planned |
 | Annotation (arrow, text, **destructive** blur) | ⏳ planned |
@@ -81,16 +83,20 @@ certificate, and this project has no budget line for one yet.
 pnpm install     # dependencies
 pnpm tauri dev   # run the app
 pnpm typecheck   # tsc --noEmit, strict, zero `any`
-pnpm test        # version coherence check + cargo test
+pnpm test        # version check + contrast check + cargo test
 pnpm tauri build # release build + NSIS installer
 pnpm build       # frontend bundle only
 ```
 
-`pnpm test` runs `scripts/check-version.mjs`, then
-`cargo test --manifest-path src-tauri/Cargo.toml`. At this stage the automated
-tests are Rust unit tests plus that coherence check — which fails the build if
+`pnpm test` runs three things in order: `scripts/check-version.mjs`, then
+`scripts/check-contrast.mjs`, then `cargo test --manifest-path
+src-tauri/Cargo.toml`. Both scripts guard the same failure mode — a fact copied
+by hand into a second place, which then drifts. The first fails the build if
 `package.json`, `tauri.conf.json` and `Cargo.toml` ever disagree on the version
-number. A frontend test runner arrives with the shortcut registry, together
+number. The second recomputes every contrast ratio quoted in
+`src/design/tokens.css` from the tokens themselves: 139 pairings, WCAG 2.x, and
+it fails rather than warns. Both are dependency-free and are separate CI steps
+too. A frontend test runner arrives with the shortcut registry, together
 with `tauri-driver` for end-to-end runs (Playwright is not usable here: it
 drives a browser, not a native window).
 
@@ -137,8 +143,14 @@ vite.config.ts
 tsconfig.json         strict, plus noUncheckedIndexedAccess & friends
 scripts/
   check-version.mjs   one version number, three files, one check
+  check-contrast.mjs  139 colour pairings, recomputed from the tokens
 src/                  React frontend
   displays.ts         typed binding for the describe_displays command
+  App.tsx             home screen, plus a hash switch to the showcase
+  design/
+    tokens.css        THE source of truth for the visual system
+    components.css    buttons, fields, glass, rows, grid — no raw values
+    Showcase.tsx      the openable showcase, at #/systeme
 src-tauri/
   build.rs            embeds the custom Windows manifest
   windows-app-manifest.xml   per-monitor DPI aware v2 — read the comments
@@ -186,21 +198,26 @@ build that already contains it.
 
 ## License
 
-**Not chosen yet.** Until a `LICENSE` file is added, default copyright applies:
-all rights reserved. GitHub's Terms of Service still let anyone view and fork a
-public repository, but not reproduce, distribute, or build derivative works
-from it. (docs.github.com, *Licensing a repository*, consulted 2 September
-2026.)
+[**PolyForm Noncommercial License 1.0.0**](LICENSE.md) — SPDX identifier
+`PolyForm-Noncommercial-1.0.0`.
 
-This is a pending decision, not a permanent stance. Adding a license later is a
-one-file change; taking one back is not, because a version published under a
-permissive license stays permissively licensed forever.
+Read it, fork it, change it, build it, run it: all of that is granted, for any
+**noncommercial** purpose. Personal use, study, hobby projects, and use by
+charities, schools, public research and government bodies are all named as
+permitted purposes in the text. Commercial use is not granted here — ask.
+
+It is **not** an OSI-approved open-source license, and that is a deliberate
+trade rather than an oversight. The reason is asymmetry: a version published
+under a permissive license stays permissively licensed forever, so moving from
+this license to MIT later costs one file, while the reverse is impossible. This
+one keeps that door open.
 
 ## Contributing
 
-Not open to contributions at this stage — the license question above is exactly
-why. Issues reporting a bug or a Windows configuration where something breaks
-are welcome and useful.
+Not open to pull requests yet — a noncommercial license makes the terms under
+which outside patches would be accepted a question that has not been thought
+through. Issues reporting a bug, or a Windows configuration where something
+breaks, are welcome and useful.
 
 ## Known limits at this stage
 
