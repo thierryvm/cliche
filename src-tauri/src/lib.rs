@@ -4,11 +4,14 @@
 //! can be exercised by `cargo test` without starting an event loop.
 
 mod displays;
+mod shortcut;
 pub mod timing;
 
 pub use displays::{collect_displays, describe_displays, summarize, DisplayInfo};
 
 use displays::print_displays;
+use tauri::Manager;
+use timing::Timings;
 
 /// Builds and runs the application. Returns only when the app exits.
 pub fn run() {
@@ -23,6 +26,19 @@ pub fn run() {
             match collect_displays(app.handle()) {
                 Ok(found) => print_displays("startup", &found),
                 Err(error) => eprintln!("[cliche] startup: {error}"),
+            }
+
+            // Managed BEFORE the shortcut is bound: the handler looks the
+            // instrument up on every press, and the first press can land the
+            // instant registration succeeds.
+            app.manage(Timings::new());
+
+            if let Err(error) = shortcut::install(app.handle()) {
+                // Deliberately not `return Err(...)`: a combination the OS
+                // refuses must not stop the application. But it must not pass
+                // in silence either - Cliche would look perfectly fine and do
+                // nothing. The message says which shortcut, and why.
+                eprintln!("{error}");
             }
 
             Ok(())
