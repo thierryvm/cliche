@@ -251,10 +251,22 @@ Cette section n'est pas une liste d'idées en attente. C'est une liste de **refu
   et ils feraient mentir la phrase « ne parle à aucun réseau ». Les diagnostics restent
   sur la machine. La décision complète sur la mise à jour est arbitrée dans
   `docs/UPDATES.md`.
-- **macOS et Linux.** Le code de capture est irréductiblement lié aux API Windows ;
-  l'architecture reste portable (l'abstraction de capture est prévue pour ça) mais
-  **on ne livre que Windows 11 x64**. Annoncer un autre système sans le construire ni
-  le tester serait une promesse fausse — et il n'y a pas de machine pour l'éprouver.
+- **macOS et Linux — pas livrés en v1, mais la porte reste ouverte, et c'est une
+  contrainte, pas un espoir.** *Corrigé le 3 septembre 2026 : cette entrée affirmait
+  que « le code de capture est irréductiblement lié aux API Windows ». C'était faux.
+  `xcap` est multiplateforme (dépendances `objc2` sous macOS, `libwayshot`/`pipewire`
+  sous Linux, toutes conditionnées par cible) et notre propre source ne contient aucun
+  `cfg(windows)` ni aucun appel Win32 direct.* On ne livre que **Windows 11 x64**,
+  parce qu'aucune machine ne permet d'éprouver les autres — annoncer un système non
+  testé serait une promesse fausse. Mais **rien ne doit fermer la porte** :
+  - une bibliothèque Windows seule ne peut jamais être le **seul** chemin d'une
+    capacité ;
+  - si un morceau devient natif (voile, saisie, presse-papier), c'est **une interface
+    unique et un moteur par système**, jamais un embranchement dispersé dans le code ;
+  - tout morceau natif arrive avec **son plan de portage écrit à côté**, sans quoi il
+    n'est pas fini.
+  L'état réel de la portabilité, vérifié plutôt que supposé, est tenu dans
+  `docs/STACK.md`.
 - **Capture d'une fenêtre défilante quelconque.** Le défilement v1 vise **les pages
   web**. Le recollage générique repose sur la simulation de molette et la corrélation
   d'images : il rate sur les listes virtualisées, les en-têtes collants et le défilement

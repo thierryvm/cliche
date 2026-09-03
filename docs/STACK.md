@@ -181,3 +181,51 @@ jette que le voile, pas le projet.
 - La **mise à jour automatique** — arbitrée séparément dans `docs/UPDATES.md`.
   Décision : pas d'updater aujourd'hui. Son adoption ferait entrer `reqwest` dans l'arbre
   de dépendances, ce qui change la posture de sécurité du projet.
+
+---
+
+## Portabilité — état RÉEL, vérifié le 3 septembre 2026
+
+Contrainte posée par Thierry ce jour-là : Cliché doit à terme tourner sous Windows,
+macOS et Linux. Windows d'abord, mais **rien ne doit fermer la porte**.
+
+Bonne nouvelle : la contrainte est presque gratuite aujourd'hui, et c'est le verdict
+du lot 1d qui l'a rendue telle — le voile est resté en Tauri, donc **aucun moteur
+natif n'a été introduit**.
+
+### Ce qui est DÉJÀ portable — constaté, pas supposé
+
+| Élément | Constat |
+| --- | --- |
+| Notre source Rust | **Zéro** `cfg(windows)`, zéro `winapi`, zéro appel Win32 direct |
+| `build.rs` | Le manifeste DPI est déjà sous `#[cfg(windows)]` / `#[cfg(not(windows))]` — le motif « une interface, un moteur par système » y est déjà appliqué |
+| `xcap` 0.9.8 | Multiplateforme : dépendances `objc2*` sous macOS, `libwayshot`/`pipewire` sous Linux, toutes conditionnées par cible |
+| `tauri-plugin-global-shortcut`, `tauri-plugin-clipboard-manager` | Multiplateformes |
+| `image` | Rust pur |
+| Transport du voile (BMP + schéma personnalisé) | Aucune API système ; le format et le protocole sont ceux de Tauri |
+
+### Ce qui reste lié à Windows aujourd'hui
+
+1. **Le manifeste DPI** (`windows-app-manifest.xml`) — déjà conditionné, sans effet
+   ailleurs. macOS et Linux ont leurs propres mécanismes d'échelle, à traiter le jour
+   du portage.
+2. **La CSP du schéma personnalisé.** Sur Windows, WebView2 sert un schéma en
+   `http://<schéma>.localhost` ; ailleurs c'est la forme `<schéma>:`. Le fichier porte
+   désormais **les deux**, exactement comme l'entrée préexistante `asset:
+   http://asset.localhost` le fait déjà pour le protocole d'assets. Précédent suivi,
+   pas inventé.
+3. **Le comportement de la fenêtre de voile** (plein écran, sans décoration, au-dessus
+   de tout) diffère par système — sur macOS notamment, la barre de menus et les Spaces
+   demandent un traitement propre. **Non éprouvé**, faute de machine.
+4. **`xcap` sous Linux** passe par les portails Wayland (`pipewire`) : c'est une
+   dépendance d'exécution, pas de compilation. **Non éprouvé.**
+
+### La règle, pour tout ce qui viendra
+
+Si une capacité devient native : **une interface unique, un moteur par système, et un
+plan de portage écrit à côté**. Une bibliothèque Windows seule ne peut pas être le seul
+chemin d'une capacité. Un moteur natif sans son plan de portage n'est pas fini.
+
+**Ce qui n'est pas prouvé et ne doit pas se lire comme tel** : rien n'a jamais été
+compilé ni exécuté sous macOS ou Linux. Tout ci-dessus est de la lecture de sources et
+de configuration. La première compilation ailleurs révélera des choses.
