@@ -59,6 +59,7 @@ use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{ExtendedColorType, ImageEncoder, RgbaImage};
 use xcap::Monitor;
 
+use crate::geometry::PhysicalRect;
 use crate::timing::Timings;
 
 /// Timing label for the grab itself.
@@ -427,6 +428,98 @@ pub fn encode_bmp(frame: &Frame) -> Result<Vec<u8>, String> {
     Ok(bmp)
 }
 
+/// Cuts a rectangle out of a frame. Bytes and a rectangle in, bytes out.
+///
+/// Pure, and deliberately ignorant: it knows nothing about the webview, about
+/// the scale factor, or about Tauri. The rectangle it is handed is ALREADY in
+/// physical pixels - turning a CSS rectangle into one is `geometry::to_physical`
+/// and is tested there, at scales this machine does not have.
+///
+/// # The four cases, handled on purpose rather than by accident
+///
+/// - **Empty rectangle.** Impossible to hand over: `PhysicalRect::new` refuses
+///   a zero width or height, exactly as [`Frame::new`] refuses a zero
+///   dimension. The empty case is closed at construction, so there is no branch
+///   here to forget - and a test in `geometry` holds that door shut.
+/// - **Rectangle leaving the image.** An ERROR, never a clamp. A rectangle that
+///   does not fit means the coordinates that produced it are wrong, and the
+///   likeliest cause is the one this machine cannot see: a scale factor applied
+///   wrongly. Clamping would return a plausible image of the wrong region and
+///   hide that for ever. The message names both rectangles so the disagreement
+///   can be read off it.
+/// - **A single pixel.** Legal. Tested.
+/// - **The whole image.** Legal, and the result must equal the input byte for
+///   byte. Tested, because a stride mistake is invisible at that size otherwise.
+///
+/// # Cost
+///
+/// One allocation of the cut, and one `copy_from_slice` per row. The source is
+/// borrowed, so the frame stays available for a second cut. Nothing here is on
+/// the 150 ms path: a selection happens after the veil is painted.
+pub fn crop(frame: &Frame, rect: PhysicalRect) -> Result<Frame, String> {
+    // In `u64`, so the sum of two `u32` cannot wrap and turn an out-of-bounds
+    // rectangle into an in-bounds one.
+    let right = u64::from(rect.x()) + u64::from(rect.width());
+    let bottom = u64::from(rect.y()) + u64::from(rect.height());
+
+    if right > u64::from(frame.width()) || bottom > u64::from(frame.height()) {
+        return Err(format!(
+            "a selection of {width}x{height} at ({x}, {y}) reaches ({right}, {bottom}), which is \
+             outside a {frame_width}x{frame_height} capture",
+            width = rect.width(),
+            height = rect.height(),
+            x = rect.x(),
+            y = rect.y(),
+            frame_width = frame.width(),
+            frame_height = frame.height(),
+        ));
+    }
+
+    // `Frame::new` already proved that `width * height * BYTES_PER_PIXEL` fits
+    // in a `usize`, and height is at least 1, so a single row does too.
+    let source_stride = frame.width() as usize * BYTES_PER_PIXEL;
+
+    // A `Frame` cannot exist with a zero width, so this is at least 4. But
+    // `chunks_exact(0)` PANICS, and this module's rule is that nothing on a
+    // real path may panic - not even through an invariant that currently holds.
+    if source_stride == 0 {
+        return Err("a capture with no width cannot be cropped".to_owned());
+    }
+
+    let row_bytes = rect.width() as usize * BYTES_PER_PIXEL;
+    // Bounded by `source_stride` through the check above, so neither the offset
+    // nor its end can wrap.
+    let row_start = rect.x() as usize * BYTES_PER_PIXEL;
+    let row_end = row_start + row_bytes;
+
+    let mut pixels = Vec::with_capacity(row_bytes * rect.height() as usize);
+
+    // `chunks_exact` yields exactly `frame.height()` full rows and no
+    // remainder: `Frame::new` guarantees the buffer is exactly
+    // `width * height * BYTES_PER_PIXEL` bytes.
+    for row in frame
+        .pixels()
+        .chunks_exact(source_stride)
+        .skip(rect.y() as usize)
+        .take(rect.height() as usize)
+    {
+        // `get`, not `row[a..b]`: the bounds check above makes this range
+        // valid, and a slicing mistake must still not panic a webview thread.
+        let slice = row.get(row_start..row_end).ok_or_else(|| {
+            format!(
+                "a row of {} byte(s) has no bytes {row_start}..{row_end}",
+                row.len()
+            )
+        })?;
+        pixels.extend_from_slice(slice);
+    }
+
+    // The last backstop. Should fewer rows have been copied than were asked
+    // for, the length contradicts the dimensions and this refuses the frame
+    // rather than returning a short image that would encode as garbage.
+    Frame::new(rect.width(), rect.height(), pixels)
+}
+
 /// Captures and encodes, timestamping each step on an already-open run.
 ///
 /// The run is NOT opened or closed here: the caller owns it, because the run
@@ -597,6 +690,211 @@ mod tests {
         assert_eq!((frame.width(), frame.height()), (3, 2));
         // Last pixel of the buffer: row 1, column 2, row-major.
         assert_eq!(&frame.pixels()[20..24], &[11, 22, 33, 44]);
+    }
+
+    // ---------------------------------------------------------------------
+    // CROP. The test that matters in this module is
+    // `a_crop_is_exact_to_the_byte`; everything around it exists so that it
+    // cannot pass for the wrong reason.
+    // ---------------------------------------------------------------------
+
+    /// A synthetic test image whose every byte is known - NOT a screenshot -
+    /// and asymmetric in BOTH axes.
+    ///
+    /// The asymmetry is the whole point, not a flourish. On an image that
+    /// repeats along x, a crop shifted by one column produces the bytes of the
+    /// correct crop and the test passes on a broken implementation. Here:
+    ///
+    /// - **R carries the column**: `10 * (column + 1)`.
+    /// - **G carries the row**: `100 + 10 * row`.
+    /// - **B carries a serial number**, row-major from 1, so no two pixels of
+    ///   the whole image are alike.
+    /// - **A is `255 - serial`**, so alpha is carried too and a channel that
+    ///   gets dropped, premultiplied or reordered shows up.
+    ///
+    /// Consequences, which are what make the exactness test able to fail:
+    /// a shift of one COLUMN moves R by 10 and B by 1; a shift of one ROW moves
+    /// G by 10 and B by the width; a transposition swaps R and G; a stride
+    /// taken from the rectangle instead of the frame lands on a different
+    /// serial from the second row onwards. None of the four can pass.
+    fn mire(width: u32, height: u32) -> Frame {
+        // The channel arithmetic above is `u8`, and a bigger mire would wrap -
+        // silently in release, in a panic in debug. Refused with a reason
+        // rather than left as a trap for whoever wants a larger fixture.
+        assert!(
+            width <= 20 && height <= 12,
+            "the mire's channel arithmetic only holds up to 20 x 12"
+        );
+
+        let mut pixels = Vec::with_capacity(width as usize * height as usize * BYTES_PER_PIXEL);
+
+        for row in 0..height {
+            for column in 0..width {
+                let serial = (row * width + column + 1) as u8;
+                pixels.push(10 * (column as u8 + 1));
+                pixels.push(100 + 10 * row as u8);
+                pixels.push(serial);
+                pixels.push(255 - serial);
+            }
+        }
+
+        Frame::new(width, height, pixels).expect("the mire must match its own dimensions")
+    }
+
+    /// Shorthand for the tests below. A rectangle that cannot exist fails the
+    /// test where it is written rather than three lines later.
+    fn rect(x: u32, y: u32, width: u32, height: u32) -> PhysicalRect {
+        PhysicalRect::new(x, y, width, height).expect("the test rectangle must have an area")
+    }
+
+    #[test]
+    fn the_mire_is_the_image_this_module_thinks_it_is() {
+        // Without this, a bug in `mire` would make every comparison below
+        // vacuous: the expected bytes would be wrong in exactly the same way as
+        // the actual ones. Spot values computed by hand from the four rules.
+        let frame = mire(5, 4);
+
+        assert_eq!(frame.pixels().len(), 5 * 4 * 4);
+        // (0, 0): first column, first row, serial 1.
+        assert_eq!(&frame.pixels()[0..4], &[10, 100, 1, 254]);
+        // (1, 1): serial 1 * 5 + 1 + 1 = 7, so byte 6 * 4 = 24.
+        assert_eq!(&frame.pixels()[24..28], &[20, 110, 7, 248]);
+        // (4, 2): serial 2 * 5 + 4 + 1 = 15, so byte 14 * 4 = 56.
+        assert_eq!(&frame.pixels()[56..60], &[50, 120, 15, 240]);
+        // (4, 3): the last pixel, serial 20, so byte 19 * 4 = 76.
+        assert_eq!(&frame.pixels()[76..80], &[50, 130, 20, 235]);
+    }
+
+    #[test]
+    fn a_crop_is_exact_to_the_byte() {
+        // THE test of this lot. A region of a known image, cut out and compared
+        // byte for byte against a table written by hand - columns 1 to 3 of
+        // rows 1 and 2 of `mire(5, 4)`.
+        //
+        // Serial numbers, from the mire's rule (row * 5 + column + 1):
+        //   row 1: columns 1, 2, 3 ->  7,  8,  9
+        //   row 2: columns 1, 2, 3 -> 12, 13, 14
+        let frame = mire(5, 4);
+
+        let cut = crop(&frame, rect(1, 1, 3, 2)).expect("3x2 at (1, 1) fits inside 5x4");
+
+        #[rustfmt::skip]
+        let expected: Vec<u8> = vec![
+            20, 110,  7, 248,    30, 110,  8, 247,    40, 110,  9, 246,
+            20, 120, 12, 243,    30, 120, 13, 242,    40, 120, 14, 241,
+        ];
+
+        assert_eq!(
+            (cut.width(), cut.height()),
+            (3, 2),
+            "3 wide and 2 high, not 2x3"
+        );
+        assert_eq!(
+            cut.pixels(),
+            &expected[..],
+            "the cut must be exact to the byte"
+        );
+    }
+
+    #[test]
+    fn shifting_that_crop_by_one_pixel_changes_the_bytes_in_every_direction() {
+        // The test above is only worth something if it can FAIL. This one
+        // proves it can: the same rectangle moved by a single pixel, in each of
+        // the four directions, must produce different bytes. If the mire ever
+        // stops being asymmetric enough, this test says so instead of leaving
+        // the exactness test quietly toothless.
+        let frame = mire(5, 4);
+        let reference = crop(&frame, rect(1, 1, 3, 2))
+            .expect("the reference rectangle fits")
+            .into_pixels();
+
+        for (direction, shifted) in [
+            ("one column left", rect(0, 1, 3, 2)),
+            ("one column right", rect(2, 1, 3, 2)),
+            ("one row up", rect(1, 0, 3, 2)),
+            ("one row down", rect(1, 2, 3, 2)),
+        ] {
+            let moved = crop(&frame, shifted)
+                .expect("every shifted rectangle still fits inside 5x4")
+                .into_pixels();
+
+            assert_ne!(
+                moved, reference,
+                "moving the rectangle {direction} produced the same bytes; an off-by-one in \
+                 `crop` would go undetected"
+            );
+        }
+    }
+
+    #[test]
+    fn a_crop_of_the_whole_image_returns_the_image_unchanged() {
+        // Catches a stride computed from the rectangle instead of the frame,
+        // and any silent transposition, at the one size where both are easiest
+        // to get accidentally right.
+        let frame = mire(5, 4);
+        let expected = frame.pixels().to_vec();
+
+        let cut = crop(&frame, rect(0, 0, 5, 4)).expect("the whole image is a legal selection");
+
+        assert_eq!((cut.width(), cut.height()), (5, 4));
+        assert_eq!(cut.into_pixels(), expected);
+    }
+
+    #[test]
+    fn a_single_pixel_crop_returns_that_one_pixel() {
+        // The bottom-right pixel: the one an off-by-one at the far edge misses.
+        let frame = mire(5, 4);
+
+        let cut = crop(&frame, rect(4, 3, 1, 1)).expect("the last pixel is inside the image");
+
+        assert_eq!((cut.width(), cut.height()), (1, 1));
+        assert_eq!(cut.pixels(), &[50, 130, 20, 235]);
+    }
+
+    #[test]
+    fn a_rectangle_that_leaves_the_image_is_refused_and_not_clamped() {
+        // Clamping would return a plausible image of the wrong region - which
+        // is precisely how a scale-factor mistake would survive unnoticed on a
+        // 125 % screen.
+        let frame = mire(5, 4);
+
+        assert!(
+            crop(&frame, rect(3, 0, 3, 1)).is_err(),
+            "one column too far"
+        );
+        assert!(crop(&frame, rect(0, 3, 1, 2)).is_err(), "one row too far");
+        assert!(
+            crop(&frame, rect(5, 0, 1, 1)).is_err(),
+            "origin past the right edge"
+        );
+        assert!(
+            crop(&frame, rect(4, 3, 1, 1)).is_ok(),
+            "the last pixel must still be reachable, or the check is off by one itself"
+        );
+
+        let message = crop(&frame, rect(3, 0, 3, 1)).expect_err("3 + 3 > 5");
+        assert!(
+            message.contains("5x4") && message.contains("3x1"),
+            "the message must name both rectangles to be actionable: {message}"
+        );
+    }
+
+    #[test]
+    fn a_crop_can_be_encoded_like_any_other_frame() {
+        // The cut is a `Frame` and nothing about it is special: it must survive
+        // the same round trip as a capture, or the selection would produce an
+        // image the rest of the pipeline cannot carry.
+        let frame = mire(5, 4);
+        let cut = crop(&frame, rect(1, 1, 3, 2)).expect("must cut");
+        let expected = cut.pixels().to_vec();
+
+        let png = encode_png(&cut).expect("a 3x2 frame encodes");
+        let decoded = image::load_from_memory_with_format(&png, ImageFormat::Png)
+            .expect("what we just encoded must decode")
+            .into_rgba8();
+
+        assert_eq!(decoded.dimensions(), (3, 2));
+        assert_eq!(decoded.into_raw(), expected);
     }
 
     // ---------------------------------------------------------------------

@@ -59,7 +59,8 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 
-use crate::capture::{self, MARK_CAPTURE};
+use crate::capture::{self, Frame, MARK_CAPTURE};
+use crate::geometry::{self, CssRect};
 use crate::timing::Timings;
 
 /// Label of the veil window. Used by `create`, by the pipeline, and by the
@@ -170,6 +171,15 @@ pub struct Veil {
     /// belongs to. `None` once served: a frame is fetched exactly once, and
     /// taking it is what makes serving it a MOVE rather than an 8.29 MB copy.
     pending: Mutex<Option<(u64, Vec<u8>)>>,
+    /// The frozen frame currently on screen, with the run it belongs to. Kept
+    /// so that a selection can be cut out of it; the run number is what lets a
+    /// selection drawn on a stale image be refused instead of cutting the wrong
+    /// screenshot.
+    ///
+    /// Unlike `pending`, this is NOT taken when read: the user may draw a
+    /// second rectangle. Where it is written, and what that costs the budget,
+    /// is in [`perform_capture`].
+    frame: Mutex<Option<(u64, Frame)>>,
     /// Run number, and the cache-buster in the URL. WebView2 would happily
     /// re-serve a previous response for an identical URL, and a `painted` that
     /// measured a cache hit would be a fabricated 2 ms.
@@ -184,6 +194,7 @@ impl Veil {
         Self {
             transport,
             pending: Mutex::new(None),
+            frame: Mutex::new(None),
             generation: AtomicU64::new(0),
             painted: AtomicUsize::new(0),
         }
@@ -198,6 +209,13 @@ impl Veil {
     /// and a panic elsewhere must not turn every later capture into a crash.
     fn pending(&self) -> std::sync::MutexGuard<'_, Option<(u64, Vec<u8>)>> {
         self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Same recovery, same reason, for the retained frame.
+    fn frame(&self) -> std::sync::MutexGuard<'_, Option<(u64, Frame)>> {
+        self.frame
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -358,7 +376,31 @@ pub fn perform_capture(app: &AppHandle) {
         eprintln!("[cliche] veil: could not hand the frame to the page: {error}");
         timings.abandon_run();
         let _ = window.hide();
+        return;
     }
+
+    // The frame is kept so the selection can be cut out of it (`veil_selected`),
+    // and it is kept HERE - after the page has been handed the image - on
+    // purpose. Read this before moving it somewhere that reads more naturally.
+    //
+    // What it costs:
+    //
+    // - Moving a `Frame` is a 24-byte move. The 8.29 MB `Vec` travels by
+    //   pointer; nothing is copied.
+    // - Replacing the slot drops whatever was in it. In the ORDINARY path that
+    //   is `None` and costs nothing: both ways a capture ends - `veil_selected`
+    //   and `veil_dismissed` - empty the slot. The only case that frees 8.29 MB
+    //   here is the shortcut pressed twice without the veil being closed in
+    //   between, which is the run `Timings::begin_run` already discards.
+    //   It is still why this line sits after `eval` rather than next to the
+    //   encode where it would read more naturally: past the last mark this
+    //   pipeline takes, and off the stretch between the shortcut and the paint.
+    //   It runs on this thread, so it is not invisible; it is merely no longer
+    //   in front of the image.
+    // - Peak memory rises to three buffers for a moment on transport A - the
+    //   previous frame, this frame, and its BMP copy - about 25 MB at
+    //   1920 x 1080. Stated rather than discovered from a task manager.
+    *veil.frame() = Some((run, frame));
 }
 
 /// Prefix of a transport-B data URL. Its bytes, plus the base64 alphabet, are
@@ -504,6 +546,107 @@ pub fn veil_painted(app: AppHandle, run: u64) {
     }
 }
 
+/// Cuts the user's selection out of the frozen frame.
+///
+/// The page sends the two corners of its drag, in CSS pixels, exactly as it
+/// measured them - it applies no scale of its own. Turning them into physical
+/// pixels is `geometry::to_physical` and nothing else; that is the only place
+/// in this application where a scale factor is multiplied, and the only place
+/// where the rounding rule is decided.
+///
+/// **The scale comes from the WINDOW, not from the monitor.** These coordinates
+/// were measured by this webview, and Tauri reports a scale factor per window;
+/// on a mixed-DPI desktop, or if the veil ever failed to be sized to the
+/// primary monitor at startup, the two numbers can differ and the window's is
+/// the one that describes these coordinates.
+///
+/// # What 1e does with the cut, and what it does not
+///
+/// It measures it, reports its size, and drops it. Nothing in this lot consumes
+/// the pixels - the clipboard is 1f. What this command proves is the chain:
+/// a rectangle drawn in CSS pixels becomes an exact rectangle of the capture's
+/// own bytes. The printed line is that proof in a form a human can hold against
+/// what they just dragged on screen.
+///
+/// Returns `Result` so that a refusal reaches the page's `catch` instead of
+/// vanishing: a selection that was rejected must not look like one that
+/// succeeded.
+#[tauri::command]
+pub fn veil_selected(
+    app: AppHandle,
+    run: u64,
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+) -> Result<(), String> {
+    // `try_state`, never `state`, for the reason `perform_capture` gives: this
+    // runs on a webview IPC thread and a panic there ends the application.
+    let veil = app
+        .try_state::<Veil>()
+        .ok_or_else(|| "no veil state is managed; the selection cannot be cut".to_owned())?;
+    let window = app
+        .get_webview_window(VEIL_WINDOW_LABEL)
+        .ok_or_else(|| "the veil window does not exist".to_owned())?;
+
+    let scale = window
+        .scale_factor()
+        .map_err(|error| format!("could not read the veil window's scale factor: {error}"))?;
+
+    let rectangle = geometry::to_physical(CssRect::from_corners(x0, y0, x1, y1)?, scale)?;
+
+    // Scoped, so the lock is released before anything is printed or any window
+    // is touched. Holding it across a call into Tauri would be a deadlock
+    // waiting for the day the two threads meet.
+    let cut = {
+        let mut held = veil.frame();
+
+        // Inner block so the borrow of `held` ends before it is emptied below.
+        let cut = {
+            let (staged, frame) = held.as_ref().ok_or_else(|| {
+                "no frozen frame is being shown; there is nothing to cut".to_owned()
+            })?;
+
+            // A selection drawn on run 3 must never be cut out of run 4's
+            // image. Without this the user would get a rectangle of the right
+            // shape taken from the wrong screen - the one failure that produces
+            // a plausible file and no error at all.
+            if *staged != run {
+                return Err(format!(
+                    "the selection belongs to run {run}, but run {staged} is the frame on \
+                     screen; it was not cut"
+                ));
+            }
+
+            capture::crop(frame, rectangle)?
+        };
+
+        // The capture is over and the veil is about to close. Holding 8.29 MB
+        // for a window nobody is looking at is a cost with no purpose, in a
+        // process that stays open for days.
+        *held = None;
+        cut
+    };
+
+    println!(
+        "[cliche] veil: run {run} selection {width}x{height} physical px at ({x}, {y}) - \
+         {bytes} byte(s), from a CSS rectangle at scale {scale:.2}",
+        width = cut.width(),
+        height = cut.height(),
+        x = rectangle.x(),
+        y = rectangle.y(),
+        bytes = cut.pixels().len(),
+    );
+
+    if let Err(error) = window.hide() {
+        eprintln!("[cliche] veil: could not hide the veil after the selection: {error}");
+    }
+
+    // `cut` is dropped here. That is 1e's boundary, and it is deliberate rather
+    // than an omission - see this function's doc comment.
+    Ok(())
+}
+
 /// Escape: close the veil and throw the run away.
 ///
 /// `abandon_run` and not `finish_run`. A cancelled capture has no latency to
@@ -513,6 +656,13 @@ pub fn veil_painted(app: AppHandle, run: u64) {
 pub fn veil_dismissed(app: AppHandle) {
     if let Some(timings) = app.try_state::<Timings>() {
         timings.abandon_run();
+    }
+    if let Some(veil) = app.try_state::<Veil>() {
+        // Released, not kept: a cancelled capture has nothing left to cut, and
+        // 8.29 MB held for a hidden window is a cost with no purpose. It also
+        // means a selection arriving after Escape finds nothing and says so,
+        // rather than cutting the screen the user just dismissed.
+        *veil.frame() = None;
     }
     if let Some(window) = app.get_webview_window(VEIL_WINDOW_LABEL) {
         if let Err(error) = window.hide() {
@@ -670,6 +820,16 @@ mod tests {
                 "`{label}` appears twice in the pipeline"
             );
         }
+    }
+
+    #[test]
+    fn a_fresh_veil_holds_no_frame_so_a_selection_before_a_capture_is_refused() {
+        // `veil_selected` answers "there is nothing to cut" from this being
+        // `None`. A `Veil` that started with a frame - or kept one across a
+        // dismissal - would cut a screen the user is no longer looking at.
+        let veil = Veil::new(Transport::CustomProtocolBmp);
+
+        assert!(veil.frame().is_none());
     }
 
     #[test]
