@@ -35,9 +35,20 @@ function toMessage(error: unknown): string {
 
 export default function App() {
   const route = useHashRoute();
+  const onShowcase = route === SHOWCASE_ROUTE;
   const [probe, setProbe] = useState<Probe>({ status: 'probing' });
 
   useEffect(() => {
+    // The showcase never displays this probe, and it has to render in a plain
+    // browser where `window.__TAURI__` does not exist. Firing the IPC call from
+    // here would cost a round trip nobody reads, and would reject on every
+    // visit outside the Tauri window. The guard is INSIDE the effect, not
+    // around it: a hook that runs only on some routes changes the hook order
+    // between renders, which React forbids.
+    if (onShowcase) {
+      return;
+    }
+
     // StrictMode runs effects twice in development, so `describe_displays` is
     // logged twice in the terminal. That is the dev double-render, not a bug.
     let abandoned = false;
@@ -58,11 +69,11 @@ export default function App() {
     return () => {
       abandoned = true;
     };
-  }, []);
+  }, [onShowcase]);
 
   // After the hooks, never before them: the hook order must not depend on the
-  // route. The display probe still runs here and is simply not shown.
-  if (route === SHOWCASE_ROUTE) {
+  // route.
+  if (onShowcase) {
     return <Showcase />;
   }
 
