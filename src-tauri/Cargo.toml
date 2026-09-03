@@ -59,6 +59,20 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 # No networking crate, no telemetry, no logging backend: this application talks
 # to nobody. Startup diagnostics go to stdout, which `pnpm tauri dev` shows.
 
+[dev-dependencies]
+# The SAME crate and version, with `bmp` added FOR TESTS ONLY.
+#
+# `capture::encode_bmp` writes a BMP header by hand. Checking the 66 bytes field
+# by field proves it matches the layout we wrote down; it does not prove a real
+# decoder accepts it. This gives the suite an INDEPENDENT reader for the
+# round-trip test - one that knows nothing about our encoder.
+#
+# Resolver v2 (implied by edition 2021) keeps dev-dependency features out of
+# normal builds, so no BMP decoder is linked into the application. The visible
+# cost is that `cargo build` and `cargo test` compile `image` with different
+# feature sets and therefore recompile it when alternated.
+image = { version = "0.25.10", default-features = false, features = ["png", "bmp"] }
+
 # Measuring is the entire point of lot 1, and an unoptimised build makes the
 # instrument lie. Both hot spots are byte loops over 8.29 MB living in
 # DEPENDENCIES, not in code written here: xcap's BGRA->RGBA swap, and the PNG

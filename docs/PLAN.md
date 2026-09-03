@@ -159,6 +159,36 @@ glisser un rectangle → PNG dans le presse-papier.
 point 1. **Plan B déjà arrêté** : basculer le voile — et lui seul — en fenêtre Win32
 native, sans toucher au reste du projet.
 
+### VERDICT DU RISQUE N°1 — mesuré le 3 septembre 2026 : **Tauri tient, le plan B ne sert pas**
+
+20 runs par transport, 1920×1080 à 100 %, un seul écran, dépendances optimisées et
+notre code en debug. `t0` = entrée du gestionnaire.
+
+| Étape | **A — protocole `cliche:`, BMP** | B — `data:`, PNG + base64 |
+| --- | --- | --- |
+| `capture` | 22,7 ms | 24,6 ms |
+| `transport` | **1,5 ms** | 83,2 ms |
+| `shown` | 0,0 ms | 0,0 ms |
+| `painted` | 97,6 ms | **59,6 ms** |
+| **TOTAL médiane** | **122,4 ms ✅** | 167,2 ms ❌ |
+| **TOTAL p95** | **133,1 ms ✅** | 180,6 ms ❌ |
+
+**Transport A retenu.** L'arbitrage tient en une ligne : le PNG gagne 38 ms à la
+peinture (867 Ko à décoder contre 8,29 Mo) et en perd 82 à l'encodage. Compresser
+une image qui ne quitte jamais la machine et qu'on jette une seconde plus tard
+coûte plus cher que de la transporter telle quelle.
+
+**Trois réserves, pour que ce verdict ne se lise pas plus large qu'il n'est** :
+1. Le total est une **borne supérieure** : il porte le retour IPC de l'accusé de
+   peinture. Mais il s'arrête à un `requestAnimationFrame`, pas à la présentation
+   par le compositeur — l'erreur existe dans les deux sens, elle n'est pas bornée.
+2. **Notre code est encore en debug** (seules les dépendances sont optimisées). Le
+   binaire livré sera donc *plus rapide* que 122,4 ms : le verdict est pessimiste.
+3. Mesuré sur **un écran à 100 %**. Rien n'est prouvé en multi-écran ni en DPI mixte.
+
+La marge est de 27,6 ms sur la médiane. Elle n'est pas confortable : toute étape
+ajoutée entre le raccourci et la peinture se prend dessus.
+
 **Risque n°2** — l'image passée de Rust au webview sature l'IPC. Un plein écran
 1920×1080 en base64 pèse ~8 Mo par capture. *On le verrait à* : la latence du point 1
 qui explose sur les grandes captures. **Parade prévue** : réponse en octets bruts
