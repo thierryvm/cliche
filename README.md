@@ -162,9 +162,13 @@ hidden behind the word "measured".
 http://cliche.localhost
 ```
 
-That is where WebView2 serves the custom `cliche:` scheme on Windows — the same
-`http://<scheme>.localhost` rule the pre-existing `http://asset.localhost`
-entry follows. Nothing else changes: `connect-src` still allows only Tauri's
+That is where WebView2 serves the custom `cliche:` scheme on Windows, following
+Tauri's `http://<scheme>.localhost` rule. It is now the **only** custom-scheme
+origin the policy allows: the `asset: http://asset.localhost` pair that used to
+sit beside it was removed on 4 September 2026. It named a protocol this build
+does not serve — no `assetProtocol` in the config, `tauri` built with
+`features = []` so `protocol-asset` is not compiled in, and no `convertFileSrc`
+anywhere in the repository. Nothing else changes: `connect-src` still allows only Tauri's
 IPC channel, `script-src` is still `'self'`, and the veil page fetches nothing
 of its own. `tauri.conf.json` is strict JSON and cannot carry a comment, so the
 reasoning lives in `veil::VEIL_ORIGIN` — with a unit test that pins the exact

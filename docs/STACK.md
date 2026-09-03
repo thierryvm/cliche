@@ -211,9 +211,14 @@ natif n'a été introduit**.
    du portage.
 2. **La CSP du schéma personnalisé.** Sur Windows, WebView2 sert un schéma en
    `http://<schéma>.localhost` ; ailleurs c'est la forme `<schéma>:`. Le fichier porte
-   désormais **les deux**, exactement comme l'entrée préexistante `asset:
-   http://asset.localhost` le fait déjà pour le protocole d'assets. Précédent suivi,
-   pas inventé.
+   désormais **les deux**, pour que le portage n'ait pas à y revenir.
+   Ce point citait auparavant l'entrée `asset: http://asset.localhost` comme
+   précédent : elle a été **retirée le 4 septembre 2026** — elle autorisait une
+   source pour un protocole que cette compilation ne sert pas (`assetProtocol`
+   absent de la config, `tauri` compilé avec `features = []` donc sans
+   `protocol-asset`, aucun `convertFileSrc` dans le dépôt). La règle
+   `http://<schéma>.localhost` reste celle de Tauri ; c'est elle, et non ce
+   précédent disparu, qui justifie les deux formes.
 3. **Le comportement de la fenêtre de voile** (plein écran, sans décoration, au-dessus
    de tout) diffère par système — sur macOS notamment, la barre de menus et les Spaces
    demandent un traitement propre. **Non éprouvé**, faute de machine.

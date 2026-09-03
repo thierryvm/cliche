@@ -7,6 +7,7 @@ pub mod capture;
 pub mod clipboard;
 mod displays;
 pub mod geometry;
+pub mod ipc;
 mod shortcut;
 pub mod timing;
 pub mod veil;
@@ -21,9 +22,16 @@ use timing::Timings;
 pub fn run() {
     let result = tauri::Builder::default()
         // Registered so that `clipboard::copy_selection` finds a `Clipboard` in
-        // managed state. This adds NO capability: the plugin's ACL guards its
-        // `invoke` commands, and nothing here goes through the webview - see the
-        // header of `clipboard.rs`.
+        // managed state. This adds NO capability: the plugin's commands DO go
+        // through the ACL (`plugin_command.is_some()` in
+        // `webview/mod.rs:1823`), no capability grants
+        // `clipboard-manager:allow-write-image`, and nothing here reaches the
+        // plugin through the webview anyway - see the header of `clipboard.rs`.
+        //
+        // That protection does NOT extend to the commands below: they carry no
+        // `plugin:` prefix and this application declares no ACL manifest, so
+        // the same `if` is false for them and no check runs. `ipc.rs` has the
+        // full reading, and the guard that replaces it.
         .plugin(tauri_plugin_clipboard_manager::init())
         // The frozen frame is served from MEMORY on this scheme; nothing is
         // written to disk and nothing leaves the process. On Windows the
@@ -33,8 +41,15 @@ pub fn run() {
         // The handler only ever hands back the ONE buffer the current run
         // staged, for the exact run number in the path, and takes it as it
         // does so. Any other path gets a 404: this scheme is not a file server.
+        //
+        // A scheme registered here is served to EVERY webview of the process,
+        // `main` included - so the calling webview's label is passed on and
+        // `serve` refuses anything that is not the veil. Without it `main`
+        // could fetch `/frame/<n>.bmp` in a loop: `serve` TAKES the buffer, so
+        // the veil would get a 404, never acknowledge, and Cliche would stop
+        // capturing with no message at all.
         .register_uri_scheme_protocol(veil::VEIL_SCHEME, |ctx, request| {
-            veil::serve(ctx.app_handle(), request.uri().path())
+            veil::serve(ctx.app_handle(), ctx.webview_label(), request.uri().path())
         })
         .invoke_handler(tauri::generate_handler![
             displays::describe_displays,
