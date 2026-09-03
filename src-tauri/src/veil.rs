@@ -57,11 +57,14 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Manager, PhysicalPosition, PhysicalSize, Webview, WebviewUrl, WebviewWindowBuilder,
+};
 
 use crate::capture::{self, Frame, MARK_CAPTURE};
 use crate::clipboard;
 use crate::geometry::{self, CssRect};
+use crate::ipc;
 use crate::timing::Timings;
 
 /// Label of the veil window. Used by `create`, by the pipeline, and by the
@@ -79,9 +82,13 @@ pub const VEIL_SCHEME: &str = "cliche";
 /// ["nsis"]`), so this constant is the Windows form - and this comment is here
 /// so that a future macOS port fails on a grep rather than on a blank veil.
 ///
-/// This exact string is what has to appear in `img-src` in `tauri.conf.json`.
-/// The existing `http://asset.localhost` entry in that same directive is the
-/// built-in `asset` scheme following the identical rule.
+/// This exact string is what has to appear in `img-src` in `tauri.conf.json`,
+/// and it is the ONLY custom-scheme origin that directive allows. The `asset:`
+/// and `http://asset.localhost` entries that used to sit beside it were removed
+/// on 4 September 2026: `assetProtocol` is not configured, `tauri` is built with
+/// `features = []` so `protocol-asset` is not compiled in, and nothing in the
+/// repository calls `convertFileSrc`. They allowed a source for a protocol that
+/// does not answer.
 pub const VEIL_ORIGIN: &str = "http://cliche.localhost";
 
 /// Timing label for building and staging the payload.
@@ -219,6 +226,25 @@ impl Veil {
         self.frame
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Drops everything this run is holding: the frozen frame AND the payload
+    /// staged for the custom protocol.
+    ///
+    /// **Both, always.** `pending` used to be emptied by `serve` and by nothing
+    /// else, so Escape - or a `show()` that failed, or an `eval()` that failed -
+    /// left 8.29 MB of screen on the heap until the next capture, in a process
+    /// that stays open for days. The user believes nothing was kept; their
+    /// password manager is still in a buffer that a minidump, the page file, or
+    /// any process of the same session can read. Whatever ends a capture must
+    /// come through here.
+    ///
+    /// Split out of `veil_dismissed` so it can be tested: building an
+    /// `AppHandle` needs an event loop a test binary has not, but a `Veil` is
+    /// a plain value.
+    fn release(&self) {
+        *self.pending() = None;
+        *self.frame() = None;
     }
 }
 
@@ -361,6 +387,11 @@ pub fn perform_capture(app: &AppHandle) {
     if let Err(error) = window.show() {
         eprintln!("[cliche] veil: could not show the veil: {error}");
         timings.abandon_run();
+        // The BMP was staged a few lines above and nobody will ever fetch it:
+        // the window this run was for never appeared. Releasing it here is the
+        // difference between an abandoned run and 8.29 MB of the user's screen
+        // living on until the next capture.
+        veil.release();
         return;
     }
     // Focus, so that the Escape key reaches the veil's own document. An
@@ -377,6 +408,9 @@ pub fn perform_capture(app: &AppHandle) {
         eprintln!("[cliche] veil: could not hand the frame to the page: {error}");
         timings.abandon_run();
         let _ = window.hide();
+        // Same reason as the `show()` path: the page was never told the URL, so
+        // the staged payload has no reader and must not survive the run.
+        veil.release();
         return;
     }
 
@@ -390,7 +424,11 @@ pub fn perform_capture(app: &AppHandle) {
     //   pointer; nothing is copied.
     // - Replacing the slot drops whatever was in it. In the ORDINARY path that
     //   is `None` and costs nothing: both ways a capture ends - `veil_selected`
-    //   and `veil_dismissed` - empty the slot. The only case that frees 8.29 MB
+    //   and `veil_dismissed` - empty THIS slot. (Only this one. Until
+    //   4 September 2026 `pending` was emptied by `serve` alone, so a
+    //   dismissed or failed run kept its staged BMP; `Veil::release` is what
+    //   now closes both, and every path that ends a run calls it.)
+    //   The only case that frees 8.29 MB
     //   here is the shortcut pressed twice without the veil being closed in
     //   between, which is the run `Timings::begin_run` already discards.
     //   It is still why this line sits after `eval` rather than next to the
@@ -465,7 +503,25 @@ fn push_base64(bytes: &[u8], out: &mut String) {
 /// for the same URL gets 404, the page never acknowledges, and the run is
 /// discarded - visible in the report as a discarded run rather than as a fast
 /// one.
-pub fn serve(app: &AppHandle, path: &str) -> tauri::http::Response<Vec<u8>> {
+///
+/// **`caller` is the webview label, and it is checked first.** A scheme
+/// registered with `register_uri_scheme_protocol` is served to every webview of
+/// the process, `main` included. Because the buffer is TAKEN, a fetch from
+/// `main` is not merely a read of the user's screen: it is a denial of service.
+/// `main` polling `/frame/<n>.bmp` empties the slot, the veil then gets a 404,
+/// never acknowledges, and Cliche stops capturing without a single message the
+/// user would see. Tauri fills this label in from the webview that made the
+/// request; it is not a value the page chooses.
+pub fn serve(app: &AppHandle, caller: &str, path: &str) -> tauri::http::Response<Vec<u8>> {
+    if let Err(refused) = ipc::ensure_from(caller, VEIL_WINDOW_LABEL, VEIL_SCHEME) {
+        eprintln!("[cliche] veil: {refused}");
+        return response(
+            403,
+            "text/plain",
+            b"this scheme is not served here".to_vec(),
+        );
+    }
+
     let requested = parse_frame_path(path);
 
     let body = app.try_state::<Veil>().and_then(|veil| {
@@ -502,6 +558,24 @@ fn parse_frame_path(path: &str) -> Option<u64> {
 /// invalid header set by us. Rather than `unwrap` on a webview thread, a
 /// failure degrades to an empty 500 - the page then shows nothing, the run is
 /// discarded, and the report says so.
+///
+/// # The ABSENCE of `Access-Control-Allow-Origin` is a security decision
+///
+/// Written down because it is a protection that exists only as a missing line,
+/// and a missing line is the easiest thing in a file to add back "for
+/// convenience". `<img src>` is not subject to CORS, so the veil displays the
+/// frame without one - but `fetch()` and `XMLHttpRequest` ARE, and without that
+/// header a script cannot READ these bytes. That is what keeps the frozen
+/// screen from being turned into a `Blob`, a canvas readback or a POST body by
+/// any script running in the veil document.
+///
+/// So: no `Access-Control-Allow-Origin` here, ever, and no wildcard "to make
+/// debugging easier". Anything that needs the pixels reads them in Rust, where
+/// they already are.
+///
+/// **Not measured, read.** This is the CORS rule as specified, not something
+/// this project has observed WebView2 enforce. The webview-label check in
+/// [`serve`] is the guard that does not depend on it.
 fn response(status: u16, content_type: &str, body: Vec<u8>) -> tauri::http::Response<Vec<u8>> {
     tauri::http::Response::builder()
         .status(status)
@@ -522,8 +596,20 @@ fn response(status: u16, content_type: &str, body: Vec<u8>) -> tauri::http::Resp
 /// Read the module header before trusting the number this closes: the mark is
 /// taken HERE, on arrival, which over-counts by the acknowledgement's own trip
 /// and under-counts by one compositor frame.
+///
+/// **Veil window only** ([`ipc`] explains why that is checked in Rust and not
+/// by a capability). A `veil_painted` from `main` would close a run that was
+/// never painted and file a fabricated latency into the median this whole lot
+/// is about. Refused with a printed line rather than a `Result`: the page calls
+/// this without a `catch`, and an unhandled rejection would be less visible
+/// than a line in the terminal, not more.
 #[tauri::command]
-pub fn veil_painted(app: AppHandle, run: u64) {
+pub fn veil_painted(app: AppHandle, webview: Webview, run: u64) {
+    if let Err(refused) = ipc::ensure_from(webview.label(), VEIL_WINDOW_LABEL, "veil_painted") {
+        eprintln!("[cliche] veil: {refused}");
+        return;
+    }
+
     let Some(timings) = app.try_state::<Timings>() else {
         return;
     };
@@ -580,15 +666,27 @@ pub fn veil_painted(app: AppHandle, run: u64) {
 /// Returns `Result` so that a refusal reaches the page's `catch` instead of
 /// vanishing: a selection that was rejected must not look like one that
 /// succeeded.
+/// **Veil window only, and this is the most important of the four guards.**
+/// Nothing in Tauri was enforcing it: with no application ACL manifest, a local
+/// webview may invoke any of this crate's commands (`ipc.rs` has the reading of
+/// `webview/mod.rs:1823`). `main` runs React and its dependency tree, and one
+/// compromised package there could call this with a full-screen rectangle and
+/// put the frozen screen on the system clipboard without the user drawing
+/// anything at all.
 #[tauri::command]
 pub fn veil_selected(
     app: AppHandle,
+    webview: Webview,
     run: u64,
     x0: f64,
     y0: f64,
     x1: f64,
     y1: f64,
 ) -> Result<(), String> {
+    // FIRST, before the frame is read, before anything is cut, before the
+    // clipboard is touched.
+    ipc::ensure_from(webview.label(), VEIL_WINDOW_LABEL, "veil_selected")?;
+
     // `try_state`, never `state`, for the reason `perform_capture` gives: this
     // runs on a webview IPC thread and a panic there ends the application.
     let veil = app
@@ -703,8 +801,18 @@ pub fn veil_selected(
 /// `abandon_run` and not `finish_run`. A cancelled capture has no latency to
 /// report, and filing it would let a failed run count as a successful one -
 /// the exact way a median gets flattered.
+///
+/// **Veil window only.** Checked BEFORE the run is abandoned: `main` calling
+/// this in a loop would cancel every capture the user starts, and Cliche would
+/// simply appear broken. Same choice as `veil_painted` on the refusal - a
+/// printed line, not a `Result` the page does not catch.
 #[tauri::command]
-pub fn veil_dismissed(app: AppHandle) {
+pub fn veil_dismissed(app: AppHandle, webview: Webview) {
+    if let Err(refused) = ipc::ensure_from(webview.label(), VEIL_WINDOW_LABEL, "veil_dismissed") {
+        eprintln!("[cliche] veil: {refused}");
+        return;
+    }
+
     if let Some(timings) = app.try_state::<Timings>() {
         timings.abandon_run();
     }
@@ -713,7 +821,7 @@ pub fn veil_dismissed(app: AppHandle) {
         // 8.29 MB held for a hidden window is a cost with no purpose. It also
         // means a selection arriving after Escape finds nothing and says so,
         // rather than cutting the screen the user just dismissed.
-        *veil.frame() = None;
+        veil.release();
     }
     if let Some(window) = app.get_webview_window(VEIL_WINDOW_LABEL) {
         if let Err(error) = window.hide() {
@@ -884,6 +992,25 @@ mod tests {
     }
 
     #[test]
+    fn ending_a_capture_releases_the_staged_payload_and_not_only_the_frame() {
+        // The scenario: shortcut pressed over a password manager, the page has
+        // not fetched the image yet, Escape. `pending` still holds the whole
+        // 8.29 MB screen, in a process that stays open for days - reachable
+        // from a minidump, the page file, or any process of the same session.
+        let veil = Veil::new(Transport::CustomProtocolBmp);
+        *veil.pending() = Some((1, vec![0xAB; 32]));
+        *veil.frame() = None;
+
+        veil.release();
+
+        assert!(
+            veil.pending().is_none(),
+            "the staged screen must not outlive the capture that staged it"
+        );
+        assert!(veil.frame().is_none());
+    }
+
+    #[test]
     fn the_default_transport_is_the_one_that_does_not_encode() {
         assert_eq!(Transport::parse(None).0, Transport::CustomProtocolBmp);
         assert_eq!(Transport::parse(None).1, None, "a default is not a warning");
@@ -946,6 +1073,27 @@ mod tests {
         assert!(
             VEIL_ORIGIN.ends_with(&format!("{VEIL_SCHEME}.localhost")),
             "Tauri serves a custom scheme at http://<scheme>.localhost on Windows"
+        );
+    }
+
+    #[test]
+    fn the_csp_allows_the_veil_origin_and_no_protocol_this_build_does_not_serve() {
+        // Reads the real configuration rather than a copy of it: a test that
+        // asserted against a string literal here would keep passing after
+        // somebody edited the file.
+        const CONFIG: &str = include_str!("../tauri.conf.json");
+
+        assert!(
+            CONFIG.matches(VEIL_ORIGIN).count() == 2,
+            "both `csp` and `devCsp` have to allow {VEIL_ORIGIN}"
+        );
+        assert!(
+            !CONFIG.contains("asset"),
+            "`asset:` / `http://asset.localhost` allow a source for a protocol \
+             this build does not serve: no `assetProtocol` in the config, \
+             `tauri` built with `features = []`, no `convertFileSrc` in the \
+             repository. Removed 4 September 2026 - if the asset protocol is \
+             ever genuinely enabled, this assertion is the place to say so."
         );
     }
 

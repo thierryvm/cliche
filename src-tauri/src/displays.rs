@@ -6,7 +6,9 @@
 
 use serde::Serialize;
 use tauri::window::Monitor;
-use tauri::AppHandle;
+use tauri::{AppHandle, Webview};
+
+use crate::ipc;
 
 /// One display, in physical pixels.
 ///
@@ -99,8 +101,23 @@ pub fn print_displays(origin: &str, displays: &[DisplayInfo]) {
 }
 
 /// Logs and returns every display. Exposed to the frontend.
+///
+/// **Main window only** - and the reason is not that this command is dangerous,
+/// because it is not. A monitor list is not the user's screen content, and the
+/// veil has no use for it.
+///
+/// The rule is: every command declared in `generate_handler!` names the window
+/// it serves. Nothing in Tauri enforces that for this application's own
+/// commands (`ipc.rs` has the reading of the vendored source), so the only
+/// thing standing between a webview and a command is the line below. An
+/// unguarded command sitting next to guarded ones reads as "this one was
+/// considered and found harmless" only if somebody wrote that down; otherwise
+/// it reads as "this one was forgotten", and the NEXT command added here would
+/// be forgotten in exactly the same way, silently.
 #[tauri::command]
-pub fn describe_displays(app: AppHandle) -> Result<Vec<DisplayInfo>, String> {
+pub fn describe_displays(app: AppHandle, webview: Webview) -> Result<Vec<DisplayInfo>, String> {
+    ipc::ensure_from(webview.label(), ipc::MAIN_WINDOW_LABEL, "describe_displays")?;
+
     let displays = collect_displays(&app)?;
     print_displays("describe_displays", &displays);
     Ok(displays)

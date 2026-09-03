@@ -63,10 +63,26 @@ struct OpenRun {
 struct State {
     open: Option<OpenRun>,
     finished: VecDeque<Vec<Step>>,
-    /// Runs started and never finished, plus finished runs that recorded
-    /// nothing. Surfaced in the report: a high count means the pipeline is
+    /// Runs *explicitly* ended without being filed - `abandon_run`, a second
+    /// `begin_run` over an open one, or a `finish_run` that had no step - and
+    /// nothing else. Surfaced in the report: a high count means the pipeline is
     /// bailing out somewhere, which is exactly the kind of thing a latency
     /// median would otherwise hide.
+    ///
+    /// **The blind spot, stated because the sentence above invites the opposite
+    /// reading.** A run that is opened and then simply never closed - no
+    /// `finish_run`, no `abandon_run`, no later press - is counted NOWHERE. It
+    /// sits in `open`, invisible: `runs` does not see it (it was never filed)
+    /// and this counter does not either (nothing ever ended it). So "a pipeline
+    /// that fails somewhere" only shows up here when the failing path had the
+    /// presence of mind to say so.
+    ///
+    /// This is a deliberate limitation, not an oversight to fix in passing.
+    /// Detecting an abandoned run means a deadline, and a deadline means either
+    /// a timer thread or a wall clock - both of them things this module refuses
+    /// (see the header). The counter measures what it can measure; a test
+    /// (`a_run_left_open_is_counted_nowhere_...`) pins the gap so it cannot be
+    /// closed by accident and believed to have always worked.
     discarded_runs: usize,
     /// Marks that could not be recorded: no run open, duplicate label, or the
     /// per-run cap reached. Also surfaced - a silently dropped mark would make
@@ -242,11 +258,15 @@ impl Timings {
 
 /// Turns per-run offsets into per-step gaps: how long each step itself took.
 ///
+/// **Expects `steps` sorted by `at`.** `aggregate` sorts before calling; see
+/// the comment there for why the push order alone does not guarantee it.
+///
 /// `saturating_sub`, not `-`. `Instant` is monotonic by contract, so offsets
 /// should never decrease; should that contract ever bend on some platform, a
 /// plain subtraction panics in debug and wraps to ~584 years in release. A zero
 /// is wrong by a hair, a wrapped value is wrong by an era, and neither may take
-/// the application down.
+/// the application down. It is kept even though the caller now sorts: the two
+/// guards cost nothing and cover different failures.
 fn step_gaps(steps: &[Step]) -> Vec<(&'static str, Duration)> {
     let mut previous = Duration::ZERO;
     let mut gaps = Vec::with_capacity(steps.len());
@@ -362,13 +382,30 @@ fn aggregate<'a>(
     for steps in runs {
         run_count += 1;
 
-        // The last offset is the whole run: start of the shortcut handler to
-        // the final step.
-        if let Some(last) = steps.last() {
+        // Sorted by timestamp before anything is derived from the sequence.
+        //
+        // This is HARDENING, not the correction of an observed bug. `mark`
+        // reads `Instant::now()` BEFORE reaching for the lock - the right call,
+        // it keeps lock contention out of the step it would otherwise inflate -
+        // but the consequence is that the push order is the order threads won
+        // the lock, not the order of the timestamps. Today's marks are causally
+        // ordered (capture, then transport, then shown, then painted, each on
+        // the result of the previous), so no figure printed so far is wrong.
+        // The day a mark arrives from a fourth thread, it would be.
+        //
+        // `sort_by_key` is stable, so equal offsets keep the order they were
+        // recorded in - which is what makes the report read in pipeline order.
+        // One allocation per run, at report time, off the hot path.
+        let mut ordered = steps.to_vec();
+        ordered.sort_by_key(|step| step.at);
+
+        // The whole run: start of the shortcut handler to its LATEST mark.
+        // The maximum, not the last element of the raw slice - see above.
+        if let Some(last) = ordered.last() {
             totals.push(last.at);
         }
 
-        for (label, gap) in step_gaps(steps) {
+        for (label, gap) in step_gaps(&ordered) {
             // Looked up by index, in its own statement, rather than by holding
             // an iterator across the `match`: the temporary from `iter_mut()`
             // would keep the borrow alive into the arm that pushes.
@@ -460,8 +497,12 @@ impl Report {
         let mut lines = Vec::new();
 
         if self.discarded_runs > 0 {
+            // "cancelled, restarted or empty" and NOT "never finished": a run
+            // that is never finished at all is invisible to this counter. See
+            // `State::discarded_runs` for the blind spot; a note that overstated
+            // its own coverage would be worse than no note.
             lines.push(format!(
-                "  note: {} run(s) discarded (never finished, or empty)",
+                "  note: {} run(s) discarded (cancelled, restarted, or empty)",
                 self.discarded_runs
             ));
         }
@@ -661,6 +702,43 @@ mod tests {
     }
 
     #[test]
+    fn a_run_is_aggregated_in_clock_order_whatever_order_its_marks_were_filed_in() {
+        // HARDENING, not a bug fix: `mark` reads the clock BEFORE taking the
+        // lock, so two marks racing from different threads can be pushed in an
+        // order that is not the order of their timestamps. Today's marks are
+        // causally ordered, so no printed figure is wrong - this pins the
+        // behaviour before someone adds a mark from a third thread.
+        let timings = Timings::new();
+        timings.file_run(&[("shown", ms(30)), ("painted", ms(20))]);
+
+        let report = timings.report();
+
+        assert_eq!(
+            report.total_median,
+            ms(30),
+            "the total is the LATEST mark of the run, not the last one pushed"
+        );
+        assert_eq!(
+            report.steps,
+            vec![
+                StepStats {
+                    label: "painted",
+                    median: ms(20),
+                    p95: ms(20),
+                    samples: 1,
+                },
+                StepStats {
+                    label: "shown",
+                    median: ms(10),
+                    p95: ms(10),
+                    samples: 1,
+                },
+            ],
+            "gaps must be computed on the chronological sequence"
+        );
+    }
+
+    #[test]
     fn a_step_missing_from_some_runs_reports_its_own_sample_count() {
         let timings = Timings::new();
         timings.file_run(&[("capture", ms(10)), ("clipboard", ms(30))]);
@@ -703,6 +781,33 @@ mod tests {
             "a run counts once it is finished, not before"
         );
         assert!(report.steps.is_empty());
+    }
+
+    #[test]
+    fn a_run_left_open_is_counted_nowhere_which_is_this_instrument_s_blind_spot() {
+        // Pins the limitation documented on `State::discarded_runs`. It passes
+        // against today's code because it DESCRIBES today's code: it is here so
+        // that closing the gap is a deliberate act with a failing test, not a
+        // silent change nobody notices.
+        let timings = Timings::new();
+        timings.begin_run();
+        timings.mark("capture");
+
+        let report = timings.report();
+
+        assert_eq!(report.runs, 0, "it was never filed");
+        assert_eq!(
+            report.discarded_runs, 0,
+            "and nothing ever ended it, so the anomaly counter cannot see it \
+             either - the report shows NO trace of this run at all"
+        );
+        assert!(
+            report
+                .lines()
+                .iter()
+                .all(|line| !line.contains("discarded")),
+            "the printed report must not be read as if it covered this case"
+        );
     }
 
     #[test]
@@ -881,11 +986,22 @@ mod tests {
     }
 
     #[test]
-    fn the_instrument_is_usable_from_several_threads() {
-        // What `app.manage` will do: one shared reference, marks arriving from
-        // threads that never met. This is a compile-time proof as much as a
-        // run-time one - it does not build unless `Timings` is `Sync` - and it
-        // checks that concurrent marking neither panics nor deadlocks.
+    fn concurrent_marks_are_neither_lost_nor_deadlocked_but_their_order_is_not_promised() {
+        // Renamed from `the_instrument_is_usable_from_several_threads`, which
+        // promised more than it proves. What it DOES prove:
+        //
+        // - `Timings` is `Sync` (it would not compile otherwise);
+        // - three threads marking at once neither panic nor deadlock;
+        // - every mark survives - none is dropped as a duplicate or a stray.
+        //
+        // What it does NOT prove, and what the old name let a reader assume:
+        // the ORDER the labels come out in, or any total. It cannot: these
+        // three marks race, and `mark` timestamps before taking the lock, so
+        // both are genuinely undetermined here. The aggregate's defence against
+        // that race is pinned by
+        // `a_run_is_aggregated_in_clock_order_whatever_order_its_marks_were_filed_in`,
+        // which uses `file_run` because a deterministic order is the only way
+        // to assert on one.
         let timings = Timings::new();
         timings.begin_run();
 

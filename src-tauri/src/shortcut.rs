@@ -9,6 +9,25 @@
 //! thread; a panic there takes the application down, and losing the app to a
 //! diagnostic is a bad trade. Hence `try_state` rather than `state`, saturating
 //! arithmetic, and every error turned into a printed line.
+//!
+//! # What guards this module, and what does not - stated because it is easy to
+//! # assume the wrong one
+//!
+//! Nothing in this file is reachable from a webview: `install` is called from
+//! `setup`, and the handler is a Rust closure the plugin invokes. No command is
+//! declared here, so there is no `invoke` frontier for an ACL to sit on, and
+//! `capabilities/default.json` grants nothing to the global-shortcut plugin -
+//! correctly, since no page needs it.
+//!
+//! What that does NOT mean, and what a reader of the paragraph above could
+//! reasonably infer: that the ACL is what protects the pipeline this shortcut
+//! starts. It is not. `crate::veil::perform_capture` is called from Rust here,
+//! but the commands that END a capture - `veil_painted`, `veil_selected`,
+//! `veil_dismissed` - ARE invoked from a webview, and this application declares
+//! no ACL manifest, so no capability check runs on them (verified against the
+//! vendored `tauri` 2.11.5 source on 4 September 2026; the reading is in
+//! `ipc.rs`). Their guard is the webview-label check in `ipc.rs`, not this
+//! module's distance from the frontend and not the capability file.
 
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
