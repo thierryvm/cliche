@@ -39,6 +39,13 @@
     <link rel="stylesheet" href="/src/design/tokens.css" />
     <style>
       /*
+       * --veil-grip-outset and --veil-grip-room now live in
+       * src/design/tokens.css, next to --veil-handle-size, and this file only
+       * consumes them. They were declared here for one commit because that
+       * file was reserved; a token defined in two places is exactly the drift
+       * its own header opens by forbidding.
+       */
+      /*
        * ON THE ROOT AND NOWHERE ELSE. The declaration moved here from `body`,
        * and the move is not tidying.
        *
@@ -73,20 +80,60 @@
            has no background of its own now, and html's is the canvas. */
         height: 100%;
 
-        /* The one thing that says "you are choosing a rectangle" before any
-           pixel is dimmed. A cursor costs nothing to paint.
-
-           Declared on BOTH elements, not on `body` alone as it was until now:
-           `cursor` is inherited, but it does not travel from <body> UP to
-           <html>, and <html> is what the pointer lands on over a zero-height
-           body. At the root it also reaches every element inside, so no child
-           can hit-test its way back to an arrow. */
-        cursor: crosshair;
-
         /* A drag here draws a rectangle. It must not start a text selection,
            and it must not start the native drag of the image below. */
         user-select: none;
         -webkit-user-select: none;
+      }
+
+      /*
+       * THE CURSOR, AND WHY IT IS ON <html> ALONE.
+       *
+       * "You are choosing a rectangle", before any pixel is dimmed. It costs
+       * nothing to paint.
+       *
+       * It was declared on `html, body` together until this lot, so that the
+       * root - which is what the pointer lands on over a zero-height body -
+       * would carry it. <html> still must, and does. The COPY on <body> is what
+       * had to go: `cursor` inherits, so body already gets this value from the
+       * root, and its own declaration would have beaten the inherited one from
+       * the rules below - every per-zone cursor would have been correct on the
+       * root and crosshair over body, which is to say everywhere the pointer
+       * actually is.
+       */
+      html {
+        cursor: crosshair;
+      }
+
+      /*
+       * The zone under the pointer, written by main.ts onto the root and read
+       * back here. An attribute rather than five classes: one write per change,
+       * and the absent case IS the crosshair above.
+       *
+       * During a drag the attribute is held to the gesture and stops following
+       * the pointer, so leaving the cell you grabbed does not change the cursor
+       * mid-resize. The names are the two DIAGONALS, not the corners: a corner
+       * dragged past its opposite one turns nwse into nesw, and the attribute
+       * is recomputed from the live geometry on every move.
+       */
+      html[data-veil-cursor='move'] {
+        cursor: move;
+      }
+
+      html[data-veil-cursor='nwse'] {
+        cursor: nwse-resize;
+      }
+
+      html[data-veil-cursor='nesw'] {
+        cursor: nesw-resize;
+      }
+
+      html[data-veil-cursor='ns'] {
+        cursor: ns-resize;
+      }
+
+      html[data-veil-cursor='ew'] {
+        cursor: ew-resize;
       }
 
       /* The frozen screen is captured at the monitor's PHYSICAL pixel size, and
@@ -184,6 +231,18 @@
        */
       #selection {
         position: fixed;
+
+        /* Where a grip's 8 px of fill sits, so that its PAINTED footprint -
+           fill plus 2 px of ring on each side - lands exactly inside the ring
+           of grab zones and never over the interior. Derived from the same two
+           tokens the ring below is drawn with, so the two cannot drift:
+           near = -(8 + 2) = -10 px, far = 100% + 2 px, mid = centred. */
+        --grip-near: calc(
+          -1 * (var(--veil-handle-size) + var(--veil-stroke-width) * 2)
+        );
+        --grip-far: calc(100% + var(--veil-stroke-width) * 2);
+        --grip-mid: calc(50% - var(--veil-handle-size) / 2);
+
         /* Overwritten by main.ts on every pointer move. Declared so the element
            has a defined geometry rather than `auto` before the first drag. */
         left: 0;
@@ -212,29 +271,160 @@
       }
 
       /*
-       * NO HANDLES. Eight corner and midpoint dots were drawn here until now,
-       * and they were removed rather than commented out.
+       * THE GRIPS. Eight dots, and this time they resize.
        *
-       * They looked grabbable and resized nothing: `pointer-events: none`, and
-       * no resize code anywhere in src/veil/main.ts. docs/PRD.md case 6 - "la
-       * zone tracee est mauvaise" - answers with Escape, which closes the veil
-       * capturing nothing, then the shortcut again for a clean selection. The
-       * word "handle" appears nowhere under docs/. An affordance that
-       * invites a gesture the product does not implement is a defect, not an
-       * unfinished feature - the user pulls, nothing moves, and they have to
-       * work out on their own that the dots were decoration.
+       * They were REMOVED on 4 September 2026 for a reason worth keeping in
+       * sight: they looked grabbable and moved nothing. What makes them
+       * legitimate now is `hitTest` in src/veil/main.ts, and nothing else.
        *
-       * The markup went with the CSS. Commented-out handles would be a third
-       * state - neither shipped nor removed - and the next reader could not
-       * tell whether they were on their way in or on their way out. When
-       * resizing is actually built, this comment is the note that says the
-       * geometry once existed and where to look for it: `git log -- veil.html`.
+       * WHERE THEY SIT, AND WHY IT IS NOT DECORATION. Each dot is laid flush
+       * OUTSIDE its corner or edge, inside the ring of grab zones. The
+       * alternative - a dot straddling the corner, which is the common one -
+       * would paint over the pixels the user is judging, and on the smallest
+       * legal selection (8 x 8 physical px) four dots straddling four corners
+       * cover the whole of it. Flush outside, the selected pixels are never
+       * touched at any size, and the dot's inner corner IS the corner.
        *
-       * --veil-handle and --veil-handle-size in src/design/tokens.css now have
-       * no user. They were left alone on purpose: this change was allowed two
-       * files, and deleting a token is a decision for whoever picks up the
-       * resizing card.
+       * ANGLES, NOT A RADIUS. A grip's job is to say which pixel is the corner.
+       * A radius rounds off exactly that information. --radius-pill described
+       * "the round tools of the veil" until these dots were removed; it stays
+       * unused by this window on purpose.
+       *
+       * THE RING IS OUTSIDE THE FILL, and it is the same two-tone pair as the
+       * selection edge and the screen band: light hairline doubled by the dark
+       * one, light INSIDE so it separates the accent from the ring, dark
+       * outside so the whole mark survives a white screenshot. --veil-handle is
+       * pinned to a literal in tokens.css and measured against both halves
+       * (6.15:1 and 3.41:1, scripts/check-contrast.mjs); it is not var(--accent),
+       * which the dark theme redefines.
        */
+      .grip {
+        position: absolute;
+        width: var(--veil-handle-size);
+        height: var(--veil-handle-size);
+        background: var(--veil-handle);
+        box-shadow:
+          0 0 0 var(--veil-stroke-width) var(--veil-stroke-light),
+          0 0 0 calc(var(--veil-stroke-width) * 2) var(--veil-stroke-dark);
+        /* The dots answer no pointer event: the zones do, and they are computed
+           from the rectangle's geometry in main.ts. A dot that could be hit on
+           its own would be a NINTH zone, overlapping the eight. */
+        pointer-events: none;
+      }
+
+      .grip-nw {
+        left: var(--grip-near);
+        top: var(--grip-near);
+      }
+
+      .grip-ne {
+        left: var(--grip-far);
+        top: var(--grip-near);
+      }
+
+      .grip-sw {
+        left: var(--grip-near);
+        top: var(--grip-far);
+      }
+
+      .grip-se {
+        left: var(--grip-far);
+        top: var(--grip-far);
+      }
+
+      .grip-n {
+        left: var(--grip-mid);
+        top: var(--grip-near);
+      }
+
+      .grip-s {
+        left: var(--grip-mid);
+        top: var(--grip-far);
+      }
+
+      .grip-w {
+        left: var(--grip-near);
+        top: var(--grip-mid);
+      }
+
+      .grip-e {
+        left: var(--grip-far);
+        top: var(--grip-mid);
+      }
+
+      /*
+       * A midpoint dot appears only when its own side has room for it -
+       * --veil-grip-room, four grip footprints. main.ts sets these two classes
+       * from the live width and height.
+       *
+       * THE ZONE STAYS EITHER WAY. A midpoint that is not drawn still resizes,
+       * and the cursor still says so: the ring is disjoint by construction and
+       * hiding a dot must not open a hole in it. Drawing is about what fits;
+       * hit-testing is about what the hand can reach.
+       */
+      #selection:not(.has-width) > .grip-n,
+      #selection:not(.has-width) > .grip-s,
+      #selection:not(.has-height) > .grip-w,
+      #selection:not(.has-height) > .grip-e {
+        display: none;
+      }
+
+      /*
+       * THE KEYBOARD LINE, and the two messages that share its plate.
+       *
+       * COST AT OPENING: ZERO, and that is a hard constraint rather than a
+       * preference. Both elements are in the document from the preheat wearing
+       * `hidden`, exactly like #selection, and neither is unhidden until the
+       * first pointer release - which is far behind `painted`. The measured p95
+       * leaves 15.7 ms of margin on the 150 ms budget.
+       *
+       * FORBIDDEN ON THIS CHROME, all of it, for one mechanical reason:
+       * backdrop-filter, transform, will-change and any opacity below 1 make
+       * the compositor build a layer AT PARSE - during the preheat - and the
+       * veil's paint would fall back into the interval lot 1d measures. Hence
+       * `left`/`right`/`bottom` here and never a translate, and an OPAQUE
+       * plate rather than a tinted one.
+       *
+       * CONTRAST: white on black is 21:1, and it does not depend on the
+       * screenshot underneath because the plate is opaque. The two-tone ring is
+       * what separates the plate from a black desktop.
+       */
+      #hint,
+      #notice {
+        position: fixed;
+        left: var(--gutter);
+        right: var(--gutter);
+        margin: 0;
+        padding: var(--space-2) var(--space-3);
+        background: var(--veil-stroke-dark);
+        color: var(--veil-stroke-light);
+        box-shadow: 0 0 0 var(--veil-stroke-width) var(--veil-stroke-light);
+        font-family: var(--font-text);
+        font-size: var(--size-caption);
+        line-height: var(--leading-normal);
+        text-align: center;
+        /* The plate must never eat the drag that is happening over it. */
+        pointer-events: none;
+      }
+
+      #hint {
+        bottom: var(--space-5);
+      }
+
+      /* Above the hint, because it answers a key the user has just pressed. */
+      #notice {
+        bottom: calc(var(--space-5) + var(--space-7));
+        /* A refusal reads heavier than a hint: the same two-tone pair, four
+           token-widths instead of one.
+           NOT --danger, and the temptation is worth naming - the dark theme
+           redefines it, and this window paints on the user's screenshot where
+           our themes do not exist. That is the exact defect that had
+           --veil-handle reading var(--accent) until 4 September 2026. */
+        box-shadow:
+          0 0 0 calc(var(--veil-stroke-width) * 2) var(--veil-stroke-light),
+          0 0 0 calc(var(--veil-stroke-width) * 4) var(--veil-stroke-dark);
+        font-weight: var(--weight-semibold);
+      }
     </style>
   </head>
   <body>
@@ -257,7 +447,38 @@
       the frame is dimmed, never erased.
     -->
     <div id="edge"></div>
-    <div id="selection" hidden></div>
+    <!--
+      The eight grips are CHILDREN of #selection, and that is what makes them
+      free: `[hidden]` on the parent takes the whole subtree out of the render
+      tree, so nothing here is laid out or painted before the first drag. They
+      are also painted ABOVE the parent's box-shadows - a box-shadow belongs to
+      the element's own background layer, descendants come after - so a dot
+      outside the rectangle is drawn over the scrim rather than under it.
+
+      Their order is the reading order of the ring, not a z-stack: none of them
+      overlaps another, at any size, because each sits in its own zone.
+    -->
+    <div id="selection" hidden>
+      <div class="grip grip-nw"></div>
+      <div class="grip grip-n"></div>
+      <div class="grip grip-ne"></div>
+      <div class="grip grip-w"></div>
+      <div class="grip grip-e"></div>
+      <div class="grip grip-sw"></div>
+      <div class="grip grip-s"></div>
+      <div class="grip grip-se"></div>
+    </div>
+    <!--
+      AFTER #selection, so both plates paint over its scrim. Both carry
+      `hidden` from the preheat: see the note above their rules for why nothing
+      may be built at capture time.
+
+      The wording is English, like every other user-facing string in this
+      application. The separator is an entity rather than the character itself,
+      so this file stays ASCII whatever writes it.
+    -->
+    <p id="hint" hidden>Enter or double-click copies &#160;&#183;&#160; Esc cancels</p>
+    <p id="notice" hidden role="alert"></p>
     <script type="module" src="/src/veil/main.ts"></script>
   </body>
 </html>
