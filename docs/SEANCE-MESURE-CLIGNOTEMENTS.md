@@ -72,9 +72,13 @@ quelque chose.
 
 1. `Ctrl` + `Maj` + `2`, puis **Échap**. Est-ce que l'écran « s'allume deux
    fois » comme ce matin, ou est-ce que ça a changé ?
-2. `Ctrl` + `Maj` + `2`, puis **un simple clic sans glisser**. Est-ce que ça
-   fait toujours « comme une photo » ? Et le terminal dit-il toujours seulement
-   `veil: dismissed` ?
+2. `Ctrl` + `Maj` + `2`, puis **un simple clic sans glisser**, puis **Échap**.
+   Est-ce que ça fait toujours « comme une photo » ?
+   *Je n'écris pas ce que le terminal devrait dire, et c'est délibéré : ta
+   première version de ce document annonçait `veil: dismissed`, ce qui était
+   vrai sur le `main` de ce matin et ne l'est plus. Depuis les poignées, un clic
+   sous le seuil ne ferme plus le voile — il faut Échap. **Dis-moi ce que tu
+   lis**, plutôt que de chercher ce que j'aurais prédit.*
 3. **Nouveau, à cause des correctifs presse-papier** : `Ctrl` + `Maj` + `2`,
    trace une vraie sélection, `Entrée`. Le voile doit maintenant se fermer
    **après** la copie, pas avant. Est-ce que la fermeture te paraît plus tardive
@@ -116,13 +120,27 @@ des deux clignotements, vérifiée dans le code.
 Le correctif inverse : la page décode, accuse réception, **puis** Rust montre la
 fenêtre. Le voile apparaît complet.
 
-**Ce qu'il faudra regarder dans les chiffres d'après :**
+**⚠️ Le piège de mesure, et il vaut d'être lu avant d'écrire une ligne de code.**
 
-- **`shown`** mesure 0,0 ms aujourd'hui. Après inversion il portera l'attente du
-  décodage, donc il grossira — c'est attendu, ce n'est pas une régression.
-- **`TOTAL`** est le seul qui compte pour le budget. Si l'inversion ne fait que
-  déplacer du temps de `painted` vers `shown`, le total ne bouge pas.
-- **La sensation.** Aujourd'hui tu vois quelque chose (de périmé) à ~25 ms ;
-  après, tu ne verras rien jusqu'à ~125 ms puis le voile complet. **Le chiffre
-  peut être identique et la sensation plus lente.** C'est toi qui trancheras, et
-  aucune mesure ne le fera à ta place.
+*Ce paragraphe corrige ce que ce document affirmait d'abord — que `shown`
+grossirait et que `TOTAL` resterait comparable. C'est faux, et le robot de revue
+de la PR #7 l'a montré.*
+
+Aujourd'hui, `shown` est marqué **juste après `window.show()`**, et `painted`
+seulement à l'accusé de la page. Le décodage tombe donc **entre les deux**, donc
+dans `TOTAL`.
+
+Si on décode **avant** `show()` sans rien changer d'autre, cette attente passe
+**avant les deux marques**. Elle sort du total. Le correctif aurait alors l'air
+**gratuit** — et le chiffre serait plus flatteur qu'avant, non parce qu'on aurait
+gagné du temps, mais parce qu'on aurait cessé de le compter.
+
+**Donc le correctif n'est pas seulement un changement d'ordre : les frontières
+de mesure doivent bouger avec lui**, pour que l'attente du décodage reste dans un
+intervalle rapporté. À trancher au moment de l'écrire, pas à supposer maintenant.
+Sans ça, la comparaison avant/après ne veut rien dire.
+
+**Et la sensation, qu'aucune mesure ne tranchera.** Aujourd'hui tu vois quelque
+chose (de périmé) à ~25 ms ; après, tu ne verras rien jusqu'à ~125 ms puis le
+voile complet. **Le chiffre peut être identique et la sensation plus lente.**
+C'est toi qui décideras.
