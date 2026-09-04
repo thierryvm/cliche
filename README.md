@@ -217,10 +217,12 @@ src-tauri/
   build.rs            embeds the custom Windows manifest
   windows-app-manifest.xml   per-monitor DPI aware v2 — read the comments
   tauri.conf.json
-  capabilities/       permission grants, empty of plugins on purpose
+  permissions/        one permission per command — this is what arms the ACL
+  capabilities/       who may call what, one file per window
   src/
     main.rs           binary entry point
     lib.rs            builder, startup logging
+    ipc.rs            which window may call which command, and why in Rust too
     displays.rs       display enumeration + unit tests
     timing.rs         the instrument the whole verdict rests on
     capture.rs        screen grab, PNG and BMP encoders, measured separately

@@ -597,12 +597,15 @@ fn response(status: u16, content_type: &str, body: Vec<u8>) -> tauri::http::Resp
 /// taken HERE, on arrival, which over-counts by the acknowledgement's own trip
 /// and under-counts by one compositor frame.
 ///
-/// **Veil window only** ([`ipc`] explains why that is checked in Rust and not
-/// by a capability). A `veil_painted` from `main` would close a run that was
-/// never painted and file a fabricated latency into the median this whole lot
-/// is about. Refused with a printed line rather than a `Result`: the page calls
-/// this without a `catch`, and an unhandled rejection would be less visible
-/// than a line in the terminal, not more.
+/// **Veil window only**, by capability AND in Rust ([`ipc`] explains why both
+/// are kept). A `veil_painted` from `main` would close a run that was never
+/// painted and file a fabricated latency into the median this whole lot is
+/// about. Refused with a printed line rather than a `Result`, and the reason is
+/// where the refusal would LAND: the page does catch it
+/// (`src/veil/main.ts:415`), but only into `console.error` - and the veil window
+/// holds no `core:webview` permission, so its devtools cannot be opened. A
+/// terminal line is the only one a human will ever read, which is also why the
+/// ACL's own refusal, which goes back to the page, would not be enough alone.
 #[tauri::command]
 pub fn veil_painted(app: AppHandle, webview: Webview, run: u64) {
     if let Err(refused) = ipc::ensure_from(webview.label(), VEIL_WINDOW_LABEL, "veil_painted") {
@@ -667,12 +670,15 @@ pub fn veil_painted(app: AppHandle, webview: Webview, run: u64) {
 /// vanishing: a selection that was rejected must not look like one that
 /// succeeded.
 /// **Veil window only, and this is the most important of the four guards.**
-/// Nothing in Tauri was enforcing it: with no application ACL manifest, a local
-/// webview may invoke any of this crate's commands (`ipc.rs` has the reading of
-/// `webview/mod.rs:1823`). `main` runs React and its dependency tree, and one
-/// compromised package there could call this with a full-screen rectangle and
-/// put the frozen screen on the system clipboard without the user drawing
-/// anything at all.
+/// `main` runs React and its dependency tree, and one compromised package there
+/// could call this with a full-screen rectangle and put the frozen screen on the
+/// system clipboard without the user drawing anything at all. Two things refuse
+/// that now: `capabilities/veil.json` grants `veil_selected` to the veil window
+/// alone, so Tauri's ACL rejects the call before this function is entered, and
+/// the check below rejects it again with a line naming both windows. Nothing
+/// enforced it before 4 September 2026 - with no application manifest, the ACL
+/// simply did not look at this crate's commands; `ipc.rs` has that reading of
+/// `webview/mod.rs:1823` and the reasons the Rust check is kept alongside.
 #[tauri::command]
 pub fn veil_selected(
     app: AppHandle,
@@ -826,7 +832,9 @@ pub fn veil_selected(
 /// **Veil window only.** Checked BEFORE the run is abandoned: `main` calling
 /// this in a loop would cancel every capture the user starts, and Cliche would
 /// simply appear broken. Same choice as `veil_painted` on the refusal - a
-/// printed line, not a `Result` the page does not catch.
+/// printed line rather than a `Result`. The page catches this one too
+/// (`src/veil/main.ts:712`), into a console nobody can open while a veil covers
+/// the screen.
 #[tauri::command]
 pub fn veil_dismissed(app: AppHandle, webview: Webview) {
     if let Err(refused) = ipc::ensure_from(webview.label(), VEIL_WINDOW_LABEL, "veil_dismissed") {
@@ -1015,21 +1023,22 @@ mod tests {
     /// The verdict itself, kept away from the filesystem so that BOTH its rows
     /// can be tested.
     ///
-    /// The `true` row cannot be reached against the real tree from a test: it
-    /// would mean creating `src-tauri/permissions/`, which is precisely the act
-    /// that arms the manifest. So the reading of the tree and the rule are two
-    /// functions, and the rule is exercised on all four combinations.
+    /// The real tree only ever exercises ONE of the four combinations at a
+    /// time: today `(true, true)`, and before 4 September 2026 `(false, false)`.
+    /// The other three would each need a tree that does not exist, so the
+    /// reading of the tree and the rule are two functions, and the rule is
+    /// exercised on all four.
     fn acl_would_lock_the_veil_out(has_permissions_dir: bool, veil_is_listed: bool) -> bool {
         has_permissions_dir && !veil_is_listed
     }
 
     #[test]
     fn the_acl_rule_fires_on_exactly_one_of_its_four_combinations() {
-        // Today's state, and the one that must stay silent: no manifest, no
-        // capability naming the veil.
+        // How this tree stood until 4 September 2026: no manifest, and no
+        // capability naming the veil. Harmless, because no check ran.
         assert!(!acl_would_lock_the_veil_out(false, false));
         assert!(!acl_would_lock_the_veil_out(false, true));
-        // The capability was added ahead of the manifest - the fix, not a fault.
+        // Today's row: the manifest is armed AND the veil has its capability.
         assert!(!acl_would_lock_the_veil_out(true, true));
         // The bomb: a manifest exists and the veil is in no capability.
         assert!(
@@ -1050,7 +1059,8 @@ mod tests {
         assert!(declares_window(only_main, "main"));
         assert!(
             !declares_window(only_main, VEIL_WINDOW_LABEL),
-            "this is today's default.json; reading `veil` into it would disarm the guard"
+            "this is the shape of default.json, which names `main` and only `main`; reading \
+             `veil` into it would disarm the guard"
         );
 
         // A description mentioning the veil is not a declaration.
@@ -1071,15 +1081,20 @@ mod tests {
 
     #[test]
     fn the_veil_window_is_capable_the_day_this_application_gets_an_acl_manifest() {
-        // A BOMB WITH A LONG FUSE, defused here.
+        // THE DAY IS 4 SEPTEMBER 2026. This test was written against a bomb
+        // with a long fuse and now guards the state that defused it.
         //
-        // `capabilities/default.json` carries `"windows": ["main"]`, and the
-        // veil window is in no capability at all. That costs nothing today:
-        // `ipc.rs` has the reading of `webview/mod.rs:1823` - with no
-        // application ACL manifest, no ACL check runs on this crate's own
-        // commands. The manifest appears the moment `src-tauri/permissions/`
-        // does, and on that day every `veil_*` call would be refused at once,
-        // for a reason nothing in the code would name.
+        // `src-tauri/permissions/` exists, so tauri-build generates an
+        // application ACL manifest and the ACL check runs on this crate's own
+        // commands (`ipc.rs` has the reading of `webview/mod.rs:1823`). The
+        // veil window therefore HAS to be named in a capability: were it not,
+        // every `veil_*` call would be refused at once, for a reason nothing in
+        // the code would name. `capabilities/veil.json` is what names it, and
+        // this test is what keeps the two facts from drifting apart - a
+        // capability file deleted or renamed turns it red.
+        //
+        // The name is left as it was written, in the future tense, so that the
+        // fuse and the day it burned out stay one story in the history.
         let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let capabilities = crate_root.join("capabilities");
 

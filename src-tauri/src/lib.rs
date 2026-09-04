@@ -28,10 +28,10 @@ pub fn run() {
         // `clipboard-manager:allow-write-image`, and nothing here reaches the
         // plugin through the webview anyway - see the header of `clipboard.rs`.
         //
-        // That protection does NOT extend to the commands below: they carry no
-        // `plugin:` prefix and this application declares no ACL manifest, so
-        // the same `if` is false for them and no check runs. `ipc.rs` has the
-        // full reading, and the guard that replaces it.
+        // Since 4 September 2026 the commands below are checked too, by the
+        // same `if`: this application declares its own ACL manifest, so each of
+        // them is granted by name to ONE window in `capabilities/`. `ipc.rs`
+        // has the full reading, and the reasons the Rust guard stays alongside.
         .plugin(tauri_plugin_clipboard_manager::init())
         // The frozen frame is served from MEMORY on this scheme; nothing is
         // written to disk and nothing leaves the process. On Windows the
@@ -48,6 +48,11 @@ pub fn run() {
         // could fetch `/frame/<n>.bmp` in a loop: `serve` TAKES the buffer, so
         // the veil would get a 404, never acknowledge, and Cliche would stop
         // capturing with no message at all.
+        //
+        // The ACL does NOT help here, and this is the one place where that is
+        // still true after the manifest was armed: a URI scheme is not `invoke`,
+        // so no capability is ever consulted for it. That label check is the
+        // only protection this route has.
         .register_uri_scheme_protocol(veil::VEIL_SCHEME, |ctx, request| {
             veil::serve(ctx.app_handle(), ctx.webview_label(), request.uri().path())
         })

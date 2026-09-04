@@ -1,7 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Core permissions for the main window. No plugin is enabled: Cliché has no filesystem, shell or network permission at this stage, and each one must be added here deliberately when a lot needs it.",
+  "description": "What the main window may do. `core:default` is Tauri's own baseline and is kept as it stands: the main window already held it before this application declared an ACL manifest, so narrowing it would change what works today and belongs to its own change, not to this one. Note that `core:default` IS a set of plugin permissions - the resolver turns every `core:<name>` key into `plugin:<name>|<command>` - so this window holds Tauri's own window, event, webview, path, app, image, resources, menu and tray commands. What is granted here is no THIRD-PARTY plugin: no filesystem, no shell, no HTTP, not the clipboard plugin, and each would have to be added deliberately. The network is closed by the CSP's `connect-src` in tauri.conf.json, not by this file. `allow-describe-displays` is the only command of this crate the main window calls; the three `veil_*` commands are deliberately absent, so the ACL now refuses them here as well as `ipc::ensure_from` does. `local` is stated rather than left to its default, and no `remote` block exists: that absence is what makes `!is_local` refuse any non-local origin outright.",
+  "local": true,
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "allow-describe-displays"]
 }

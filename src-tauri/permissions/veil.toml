@@ -1,0 +1,57 @@
+# Application permissions for the three commands the veil window calls.
+#
+# WHY THIS DIRECTORY EXISTS AT ALL.
+# `tauri-build` inserts an application manifest under the `__app-acl__` key only
+# when the application declares at least one permission - a default permission,
+# a permission set, or a plain permission (`tauri-build-2.6.3/src/acl.rs:408-413`,
+# read on 4 September 2026). Without that key `has_app_acl_manifest` is false in
+# `tauri-2.11.5/src/webview/mod.rs:1823`, and no capability check runs on this
+# crate's OWN commands: any local webview of the process could invoke any of
+# them. The files under this directory are what arms that check. Nothing else
+# does.
+#
+# WHY NO PERMISSION HERE IS NAMED `default`.
+# `validate_capabilities` fails the build when a capability names a permission
+# that does not exist - except for the base name `default`, which it accepts
+# without ever looking it up (`tauri-build-2.6.3/src/acl.rs:363`). An application
+# permission called `default` would therefore be the single name a typo could
+# survive, silently. Every identifier below is `allow-<command-with-dashes>`,
+# which is also the shape `tauri-build` generates on its own
+# (`tauri-utils-2.9.3/src/acl/build.rs:289-309`).
+#
+# WHY NO `deny-*` PERMISSION IS DECLARED, ANYWHERE.
+# Not an oversight, and the reason is a trap worth knowing before somebody adds
+# one "to be safe". In `tauri-2.11.5/src/ipc/authority.rs:446-451`:
+#
+#   self.denied_commands.get(command)
+#       .map(|resolved| resolved.iter().any(|cmd| origin.matches(&cmd.context)))
+#       .is_some()
+#
+# `Option::map` wraps the `any` result, so `.is_some()` is true as soon as the
+# command appears in `denied_commands` AT ALL - the boolean it just computed is
+# discarded. And for the `__app-acl__` key the command is filed under its bare
+# name, with no window in the key (`tauri-utils-2.9.3/src/acl/resolved.rs:145-153`).
+# A `deny-veil-selected` added to the MAIN window's capability would therefore
+# refuse `veil_selected` to the veil window as well, and no selection could ever
+# be copied again - in release, with `Command veil_selected not allowed by ACL`
+# sent to a page whose console nobody can open. Leaving a command OUT of a
+# capability is the only refusal that is scoped to a window.
+
+# These files are read at the glob `permissions/**/*` and filtered by extension
+# (`tauri-build-2.6.3/src/acl.rs:299-329`, `tauri-utils-2.9.3/src/acl/build.rs:80-85`):
+# a `.md` note dropped in here would be ignored rather than reported.
+
+[[permission]]
+identifier = "allow-veil-painted"
+description = "Lets the veil window report that the frozen frame is on screen, which is what closes a measured run."
+commands.allow = ["veil_painted"]
+
+[[permission]]
+identifier = "allow-veil-selected"
+description = "Lets the veil window hand back the rectangle the user dragged. This is the call that reaches the system clipboard, and the one no other window may make."
+commands.allow = ["veil_selected"]
+
+[[permission]]
+identifier = "allow-veil-dismissed"
+description = "Lets the veil window cancel a capture, releasing the frozen frame without copying anything."
+commands.allow = ["veil_dismissed"]
