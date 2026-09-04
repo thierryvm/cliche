@@ -69,6 +69,17 @@ jobs:
       - name: TypeScript - strict, zero any
         run: pnpm typecheck
 
+      # THIS STEP IS NOT OPTIONAL, and the reason is structural: this workflow
+      # calls every gate INDIVIDUALLY and never runs `pnpm test`. A runner added
+      # to that script alone would be green on the contributor's machine and
+      # absent from CI, which is the failure mode that leaves a suite rotting
+      # unnoticed. `pnpm test` gained `vitest run` too - both, or neither.
+      #
+      # Placed here, among the fast gates: it needs node_modules and nothing
+      # else, and it finishes long before the Rust toolchain is even installed.
+      - name: Vitest - the veil's zone model
+        run: pnpm test:unit
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

@@ -912,17 +912,22 @@ mod tests {
     // "identically wrong".
     //
     // WHAT THESE TESTS DO NOT PROVE. The gesture itself lives in
-    // `src/veil/main.ts` and this repository has NO JavaScript test runner, so
-    // nothing here executes that file. `Drag` below is a MODEL of its anchor
-    // rule, exercised against the real Rust pipeline the gesture ends in
-    // (`CssRect::from_corners` -> `geometry::to_physical` -> `crop`). It pins
-    // the property and it pins the Rust half; the TypeScript half is held to it
-    // by reading, not by a test.
+    // `src/veil/zones.ts` and nothing here executes that file. `Drag` below is
+    // a MODEL of its anchor rule, exercised against the real Rust pipeline the
+    // gesture ends in (`CssRect::from_corners` -> `geometry::to_physical` ->
+    // `crop`). It pins the property and it pins the Rust half.
+    //
+    // Since 4 September 2026 the TypeScript half is no longer held to it by
+    // reading alone: `src/veil/zones.test.ts` states the same anchor rule under
+    // Vitest, on the SAME start rectangle and the same target points as
+    // `every_grip_anchors_on_the_side_it_is_not_moving` below. Two statements
+    // in two languages, neither derived from the other - which is what makes a
+    // future disagreement between them worth reading.
     // ---------------------------------------------------------------------
 
     use crate::geometry::{to_physical, CssRect};
 
-    /// The eight resize grips, named as `hitTest` in `src/veil/main.ts` names
+    /// The eight resize grips, named as `hitTest` in `src/veil/zones.ts` names
     /// its zones.
     #[derive(Clone, Copy, Debug)]
     enum Grip {

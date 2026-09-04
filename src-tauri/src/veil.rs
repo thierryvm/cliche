@@ -757,18 +757,30 @@ pub fn veil_selected(
         bytes = cut.pixels().len(),
     );
 
-    if let Err(error) = window.hide() {
-        eprintln!("[cliche] veil: could not hide the veil after the selection: {error}");
-    }
-
-    // The clipboard write comes AFTER the veil is hidden, deliberately: should
-    // it fail, the user is left with their screen back and an error message
-    // rather than with a frozen overlay they have to press Escape to be rid of.
-    // Nothing in the copy needs the window, so the two are independent.
+    // THE COPY COMES FIRST, AND THE VEIL IS HIDDEN ONLY ONCE IT SUCCEEDS.
+    //
+    // It used to be the other way round, with this reasoning: "should it fail,
+    // the user is left with their screen back rather than with a frozen overlay
+    // they have to press Escape to be rid of". That reasoning was wrong, and the
+    // review bot on PR #5 found why. The refusal travels back to the page's
+    // `catch`, which paints it in the veil - so hiding first wrote the error
+    // message into a window nobody could see. The user got their desktop back,
+    // no image on the clipboard, and NO MESSAGE: a silent failure on the one
+    // action this product exists to perform.
+    //
+    // Hiding afterwards costs the ~10 ms the copy takes, all of it outside the
+    // 150 ms budget, which ends at `painted` and long before the user's drag.
+    // And it makes this path agree with the too-small refusal, which already
+    // leaves the veil up so the selection can be corrected (see the area check
+    // above, refused before the crop).
     //
     // `?`: a refusal must reach the page's `catch`. A capture that did not make
     // it to the clipboard has failed, and it must not look like one that worked.
     let copied = clipboard::copy_selection(&app, &cut)?;
+
+    if let Err(error) = window.hide() {
+        eprintln!("[cliche] veil: could not hide the veil after the selection: {error}");
+    }
 
     println!(
         "{}",
