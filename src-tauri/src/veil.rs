@@ -718,9 +718,10 @@ pub fn veil_selected(
     // is touched. Holding it across a call into Tauri would be a deadlock
     // waiting for the day the two threads meet.
     let cut = {
-        let mut held = veil.frame();
+        // Not `mut` any more: this guard is only read now. The frame used to be
+        // emptied here, and is emptied after the copy instead.
+        let held = veil.frame();
 
-        // Inner block so the borrow of `held` ends before it is emptied below.
         let cut = {
             let (staged, frame) = held.as_ref().ok_or_else(|| {
                 "no frozen frame is being shown; there is nothing to cut".to_owned()
@@ -740,10 +741,12 @@ pub fn veil_selected(
             capture::crop(frame, rectangle)?
         };
 
-        // The capture is over and the veil is about to close. Holding 8.29 MB
-        // for a window nobody is looking at is a cost with no purpose, in a
-        // process that stays open for days.
-        *held = None;
+        // The frozen frame is NOT released here, and the reason arrived with
+        // the fix below. Making the clipboard refusal visible is worth nothing
+        // if the user cannot act on it: dropping the frame now would leave them
+        // looking at an error over a veil that has nothing left to cut, so the
+        // retry it invites would fail with a different message. It is released
+        // after the copy succeeds - see the end of this function.
         cut
     };
 
@@ -777,6 +780,12 @@ pub fn veil_selected(
     // `?`: a refusal must reach the page's `catch`. A capture that did not make
     // it to the clipboard has failed, and it must not look like one that worked.
     let copied = clipboard::copy_selection(&app, &cut)?;
+
+    // The capture really is over now, so the frozen frame goes. Holding 8.29 MB
+    // for a window nobody is looking at is a cost with no purpose in a process
+    // that stays open for days - but it is only pointless ONCE the copy has
+    // worked. Until then it is what a retry needs.
+    *veil.frame() = None;
 
     if let Err(error) = window.hide() {
         eprintln!("[cliche] veil: could not hide the veil after the selection: {error}");
