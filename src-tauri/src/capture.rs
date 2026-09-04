@@ -898,6 +898,280 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
+    // RESIZING, AND THE EXACTNESS THAT MUST SURVIVE IT.
+    //
+    // Required in these words on 4 September 2026: "la decoupe au pixel doit
+    // rester exacte apres un redimensionnement : le test au pixel doit couvrir
+    // ce cas."
+    //
+    // THE PROPERTY. A selection is carried as its TWO ABSOLUTE CORNERS, in CSS
+    // pixels, and never as a size that each gesture adds to. It follows that a
+    // rectangle reached by N resizes cuts the same bytes as the same rectangle
+    // drawn in one go - and that is what `a_sequence_of_resizes_...` asserts,
+    // against a table written by hand so that "identical" cannot mean
+    // "identically wrong".
+    //
+    // WHAT THESE TESTS DO NOT PROVE. The gesture itself lives in
+    // `src/veil/main.ts` and this repository has NO JavaScript test runner, so
+    // nothing here executes that file. `Drag` below is a MODEL of its anchor
+    // rule, exercised against the real Rust pipeline the gesture ends in
+    // (`CssRect::from_corners` -> `geometry::to_physical` -> `crop`). It pins
+    // the property and it pins the Rust half; the TypeScript half is held to it
+    // by reading, not by a test.
+    // ---------------------------------------------------------------------
+
+    use crate::geometry::{to_physical, CssRect};
+
+    /// The eight resize grips, named as `hitTest` in `src/veil/main.ts` names
+    /// its zones.
+    #[derive(Clone, Copy, Debug)]
+    enum Grip {
+        Nw,
+        N,
+        Ne,
+        W,
+        E,
+        Sw,
+        S,
+        Se,
+    }
+
+    /// A selection as the veil holds it: the two corners the pointer reported.
+    /// Absolute, in CSS pixels. No size, no delta, no accumulation.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct Drag {
+        anchor: (f64, f64),
+        pointer: (f64, f64),
+    }
+
+    impl Drag {
+        fn new(anchor: (f64, f64), pointer: (f64, f64)) -> Self {
+            Self { anchor, pointer }
+        }
+
+        fn left(self) -> f64 {
+            self.anchor.0.min(self.pointer.0)
+        }
+
+        fn right(self) -> f64 {
+            self.anchor.0.max(self.pointer.0)
+        }
+
+        fn top(self) -> f64 {
+            self.anchor.1.min(self.pointer.1)
+        }
+
+        fn bottom(self) -> f64 {
+            self.anchor.1.max(self.pointer.1)
+        }
+
+        /// Grabbing a grip is a DRAW whose anchor is the opposite corner - the
+        /// rule `main.ts` implements, and the reason resizing needs no inversion
+        /// branch of its own: `from_corners` already normalises.
+        ///
+        /// A side grip moves one edge and keeps the other axis, which it does by
+        /// pinning the pointer's other coordinate to the edge that is not
+        /// moving. So one of `to`'s two coordinates is deliberately ignored, and
+        /// the tests below pass an absurd value in it to prove it is.
+        fn grab(self, grip: Grip, to: (f64, f64)) -> Self {
+            match grip {
+                Grip::Nw => Self::new((self.right(), self.bottom()), to),
+                Grip::Ne => Self::new((self.left(), self.bottom()), to),
+                Grip::Sw => Self::new((self.right(), self.top()), to),
+                Grip::Se => Self::new((self.left(), self.top()), to),
+                Grip::N => Self::new((self.left(), self.bottom()), (self.right(), to.1)),
+                Grip::S => Self::new((self.left(), self.top()), (self.right(), to.1)),
+                Grip::W => Self::new((self.right(), self.top()), (to.0, self.bottom())),
+                Grip::E => Self::new((self.left(), self.top()), (to.0, self.bottom())),
+            }
+        }
+
+        /// The whole real path from two CSS corners to the bytes that would
+        /// reach the clipboard.
+        fn cut(self, frame: &Frame, scale: f64) -> Frame {
+            let css =
+                CssRect::from_corners(self.anchor.0, self.anchor.1, self.pointer.0, self.pointer.1)
+                    .expect("every corner in these tests is a finite, non-negative coordinate");
+            let rect = to_physical(css, scale).expect("the rectangle has an area at this scale");
+            crop(frame, rect).expect("the rectangle is inside the mire")
+        }
+    }
+
+    /// The same gesture written the WRONG way: the selection carried as whole
+    /// CSS pixels that each move adds a rounded delta to. It exists so that the
+    /// exactness test cannot pass vacuously - see the test that uses it.
+    #[derive(Clone, Copy, Debug)]
+    struct Drift {
+        left: f64,
+        top: f64,
+        right: f64,
+        bottom: f64,
+        last: (f64, f64),
+    }
+
+    impl Drift {
+        fn new(anchor: (f64, f64), pointer: (f64, f64)) -> Self {
+            Self {
+                left: anchor.0.min(pointer.0).round(),
+                top: anchor.1.min(pointer.1).round(),
+                right: anchor.0.max(pointer.0).round(),
+                bottom: anchor.1.max(pointer.1).round(),
+                last: pointer,
+            }
+        }
+
+        /// Only the south-east corner, which is all the test below needs.
+        fn drag_se(mut self, to: (f64, f64)) -> Self {
+            self.right += (to.0 - self.last.0).round();
+            self.bottom += (to.1 - self.last.1).round();
+            self.last = to;
+            self
+        }
+
+        fn cut(self, frame: &Frame, scale: f64) -> Frame {
+            Drag::new((self.left, self.top), (self.right, self.bottom)).cut(frame, scale)
+        }
+    }
+
+    #[test]
+    fn every_grip_anchors_on_the_side_it_is_not_moving() {
+        // The rule the whole resize gesture rests on. Got wrong, a corner grip
+        // moves the rectangle instead of resizing it, and a side grip drags the
+        // other axis with it.
+        let start = Drag::new((10.0, 20.0), (30.0, 40.0));
+
+        // Corner grips: the opposite corner stays put, both axes follow.
+        assert_eq!(start.grab(Grip::Se, (35.0, 45.0)).anchor, (10.0, 20.0));
+        assert_eq!(start.grab(Grip::Nw, (5.0, 15.0)).anchor, (30.0, 40.0));
+        assert_eq!(start.grab(Grip::Ne, (35.0, 15.0)).anchor, (10.0, 40.0));
+        assert_eq!(start.grab(Grip::Sw, (5.0, 45.0)).anchor, (30.0, 20.0));
+
+        // Side grips: one edge moves, the other axis is untouched. The absurd
+        // coordinate proves the ignored one really is ignored.
+        let north = start.grab(Grip::N, (999.0, 12.0));
+        assert_eq!((north.left(), north.right()), (10.0, 30.0));
+        assert_eq!((north.top(), north.bottom()), (12.0, 40.0));
+
+        let south = start.grab(Grip::S, (999.0, 50.0));
+        assert_eq!((south.left(), south.right()), (10.0, 30.0));
+        assert_eq!((south.top(), south.bottom()), (20.0, 50.0));
+
+        let west = start.grab(Grip::W, (4.0, 999.0));
+        assert_eq!((west.left(), west.right()), (4.0, 30.0));
+        assert_eq!((west.top(), west.bottom()), (20.0, 40.0));
+
+        let east = start.grab(Grip::E, (44.0, 999.0));
+        assert_eq!((east.left(), east.right()), (10.0, 44.0));
+        assert_eq!((east.top(), east.bottom()), (20.0, 40.0));
+    }
+
+    #[test]
+    fn a_sequence_of_resizes_cuts_the_same_bytes_as_the_rectangle_drawn_directly() {
+        // THE test Thierry asked for. Six gestures - four grips, then two that
+        // drag a corner PAST the opposite one so the rectangle inverts twice -
+        // and the cut must be the one a single drag on the final corners makes.
+        //
+        // Scale 1.25, which this machine does not have: the interesting
+        // coordinates are the ones that do not land on a physical pixel.
+        let frame = mire(20, 12);
+        let scale = 1.25;
+
+        let resized = Drag::new((2.0, 1.0), (4.0, 3.0))
+            .grab(Grip::Se, (7.6, 5.2))
+            .grab(Grip::Nw, (3.2, 1.6))
+            .grab(Grip::E, (9.6, 999.0))
+            .grab(Grip::N, (999.0, 0.8))
+            // Past the opposite corner, in both axes at once: the rectangle
+            // turns inside out and no branch anywhere handles it.
+            .grab(Grip::Nw, (12.0, 6.4))
+            .grab(Grip::Sw, (10.4, 4.0));
+
+        // Hand-computed from the six gestures above: left 10.4, top 4.0,
+        // right 12.0, bottom 5.2. Written with the corners SWAPPED against the
+        // sequence's, so `from_corners` normalisation is exercised as well.
+        let expected_corners = Drag::new((10.4, 4.0), (12.0, 5.2));
+        assert_eq!(
+            (
+                resized.left(),
+                resized.top(),
+                resized.right(),
+                resized.bottom()
+            ),
+            (10.4, 4.0, 12.0, 5.2),
+            "the six gestures do not end where the hand computation says they do"
+        );
+
+        let direct = expected_corners.cut(&frame, scale);
+
+        // At 1.25 those corners land on physical (13, 5) to (15, 7): a 2 x 2
+        // cut whose bottom edge, 6.5, is the one a rounding rule can move.
+        // Serial numbers from the mire's rule (row * 20 + column + 1):
+        //   row 5: columns 13, 14 -> 114, 115
+        //   row 6: columns 13, 14 -> 134, 135
+        #[rustfmt::skip]
+        let by_hand: Vec<u8> = vec![
+            140, 150, 114, 141,   150, 150, 115, 140,
+            140, 160, 134, 121,   150, 160, 135, 120,
+        ];
+        assert_eq!(
+            (direct.width(), direct.height()),
+            (2, 2),
+            "the hand computation says 2 x 2 physical px"
+        );
+        assert_eq!(
+            direct.pixels(),
+            &by_hand[..],
+            "the rectangle drawn directly must be the bytes computed by hand, or `identical` \
+             below would only mean `identically wrong`"
+        );
+
+        assert_eq!(
+            resized.cut(&frame, scale).pixels(),
+            direct.pixels(),
+            "six resizes ending on that rectangle must cut it byte for byte"
+        );
+    }
+
+    #[test]
+    fn carrying_the_selection_as_a_size_instead_of_two_corners_loses_pixels() {
+        // Why the test above is not vacuous. The same three moves, applied as
+        // rounded deltas to a stored size - the implementation the property
+        // forbids - and the bytes differ. Each move is 0.4 px, which rounds to
+        // nothing three times in a row while the corners say 1.2.
+        let frame = mire(20, 12);
+        let scale = 1.0;
+
+        let exact = Drag::new((2.0, 1.0), (4.0, 3.0))
+            .grab(Grip::Se, (4.4, 3.4))
+            .grab(Grip::Se, (4.8, 3.8))
+            .grab(Grip::Se, (5.2, 4.2));
+
+        let drifted = Drift::new((2.0, 1.0), (4.0, 3.0))
+            .drag_se((4.4, 3.4))
+            .drag_se((4.8, 3.8))
+            .drag_se((5.2, 4.2));
+
+        let exact_cut = exact.cut(&frame, scale);
+        let drifted_cut = drifted.cut(&frame, scale);
+
+        assert_eq!(
+            (exact_cut.width(), exact_cut.height()),
+            (3, 3),
+            "two absolute corners say 2..5.2 and 1..4.2, which is 3 x 3 physical px"
+        );
+        assert_eq!(
+            (drifted_cut.width(), drifted_cut.height()),
+            (2, 2),
+            "an accumulated size swallows three 0.4 px moves"
+        );
+        assert_ne!(
+            drifted_cut.pixels(),
+            exact_cut.pixels(),
+            "if these were equal, the exactness test above could not fail either"
+        );
+    }
+
+    // ---------------------------------------------------------------------
     // BMP: the transport format 1d measures. See `encode_bmp` for the
     // arithmetic that chose it over PNG.
     // ---------------------------------------------------------------------

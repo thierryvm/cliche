@@ -1,6 +1,6 @@
 /**
  * The veil page: show a frozen screen, say when it is painted, let the user
- * draw a rectangle on it, close on Escape.
+ * draw a rectangle on it, resize it, move it, copy it, close on Escape.
  *
  * Bare TypeScript. No React, no component layer. The only import is `invoke`,
  * because both the paint acknowledgement and the selection have to reach Rust
@@ -22,6 +22,28 @@
  * The only arithmetic here is clamping to the viewport and taking min/abs to
  * DRAW the rectangle. Rust normalises the same two corners with the same rule,
  * so what is shown and what is cut come from one decision rather than two.
+ *
+ * ## THE SELECTION IS TWO ABSOLUTE CORNERS, AND NEVER A SIZE
+ *
+ * The rule that makes resizing safe, and the one to read before touching
+ * `resize` or `move` below. The state is `anchor` and `pointer`: two points, in
+ * the coordinates the pointer reported, absolute. No width is stored, no delta
+ * is ever added to anything.
+ *
+ * The consequence is the property Thierry asked for on 4 September 2026 - "la
+ * decoupe au pixel doit rester exacte apres un redimensionnement" - and it is
+ * under test in Rust, in `capture.rs`
+ * (`a_sequence_of_resizes_cuts_the_same_bytes_as_the_rectangle_drawn_directly`,
+ * with the accumulating implementation next to it to prove that test can fail):
+ * a rectangle reached by any number of resizes cuts the same bytes as the same
+ * rectangle drawn in one gesture. An implementation that carried a size and
+ * added each gesture's movement to it would round once per gesture and lose
+ * pixels that no test in the Rust half could see.
+ *
+ * A resize is therefore not a second kind of gesture. It is a DRAW whose anchor
+ * is the opposite corner, which is also why nothing here handles inversion:
+ * drag a corner past its opposite and `drawSelection` and Rust's
+ * `CssRect::from_corners` both normalise, with no branch on either side.
  *
  * ## What `painted` really means
  *
@@ -45,6 +67,17 @@
  * deliberate choice: a double `requestAnimationFrame` would be closer to true
  * presentation but would add a whole frame of the page's own scheduling to
  * every measurement.
+ *
+ * ## Nothing added by this lot is inside that measurement
+ *
+ * The grips, the keyboard line and the refusal plate are all static markup
+ * wearing `hidden` since the preheat, and none of them is unhidden before the
+ * first pointer press - which is after `painted`, at human speed. None of them
+ * carries `backdrop-filter`, `transform`, `will-change` or an opacity below 1,
+ * each of which would make the compositor build a layer AT PARSE, inside the
+ * interval lot 1d measures. The p95 leaves 15.7 ms of margin; this lot spends
+ * none of it. That is reasoning about how Blink is understood to work, not a
+ * measurement taken on this machine - the same standing caveat as `#edge`.
  *
  * ## The edge frame is inside that acknowledgement, and this is why
  *
@@ -89,9 +122,260 @@ declare global {
   }
 }
 
+// ---------------------------------------------------------------------------
+// THE ZONE MODEL. Pure, DOM-free, and the only part of this file that could be
+// unit-tested if this repository had a JavaScript test runner. It has none -
+// see the note above `hitTest`.
+// ---------------------------------------------------------------------------
+
+/** A point in the veil document, in CSS pixels. */
+export interface Point {
+  readonly x: number;
+  readonly y: number;
+}
+
+/** A rectangle by its four edges, already normalised. */
+export interface Rect {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+
+/**
+ * What the pointer is over: one of the eight resize zones, the interior, or
+ * beyond the whole affair.
+ */
+export type Zone =
+  | 'nw'
+  | 'n'
+  | 'ne'
+  | 'w'
+  | 'e'
+  | 'sw'
+  | 's'
+  | 'se'
+  | 'inside'
+  | 'outside';
+
+/**
+ * Which zone a point falls in.
+ *
+ * # The model: ONE RING, ENTIRELY OUTSIDE THE RECTANGLE
+ *
+ * Take the rectangle grown by `outset` on all four sides, and subtract the
+ * rectangle. What is left is a ring, cut by the extensions of the four edges
+ * into eight cells: NW, N, NE, W, E, SW, S, SE.
+ *
+ * Everything follows from that one decision:
+ *
+ * - **No grab zone ever covers a selected pixel, at any size.** So "move it by
+ *   its middle" survives down to the smallest selection this tool accepts,
+ *   8 x 8 physical px (`clipboard::MIN_COPYABLE_AREA_PX`), where a ring drawn
+ *   half-inside would have swallowed the interior whole.
+ * - **No zone overlaps another**, by construction. There is no priority rule to
+ *   write, and therefore none to get wrong: the cells partition the ring.
+ * - The resolution order is a consequence, not a policy: outside the grown
+ *   rectangle is `outside`, inside the rectangle is `inside`, and what remains
+ *   is the ring cell the point is in.
+ *
+ * The rectangle's own edge belongs to `inside`. A point exactly on `left` is
+ * one CSS pixel of the image the user chose, and moving is the gesture that
+ * cannot destroy anything.
+ *
+ * # WHY `outset` IS 12 px AND NOT THE 44 px OF `--hit-min`
+ *
+ * Because 44 is arithmetically impossible here, not because it was inconvenient.
+ * Eight disjoint zones of 44 px need a 132 x 132 px selection; the smallest
+ * legal one is 8 x 8. The exception, and what makes it acceptable - missing a
+ * grip costs a `move` or a `redraw`, both undone by the next gesture - is
+ * written out in veil.html next to the token.
+ *
+ * # NOT UNDER TEST, and there is no honest way around it today
+ *
+ * This function is pure precisely so it could be tested. It is not: this
+ * repository has no JavaScript test runner at all (`pnpm test` is
+ * check-version, check-contrast and `cargo test`), and inventing one for this
+ * lot would be a bigger decision than the lot. What IS under test, in Rust, is
+ * the anchor rule this zone model feeds - see `capture.rs`,
+ * `every_grip_anchors_on_the_side_it_is_not_moving`.
+ */
+export const hitTest = (rect: Rect, point: Point, outset: number): Zone => {
+  const west = point.x < rect.left;
+  const east = point.x > rect.right;
+  const north = point.y < rect.top;
+  const south = point.y > rect.bottom;
+
+  if (!west && !east && !north && !south) {
+    return 'inside';
+  }
+
+  if (
+    point.x < rect.left - outset ||
+    point.x > rect.right + outset ||
+    point.y < rect.top - outset ||
+    point.y > rect.bottom + outset
+  ) {
+    return 'outside';
+  }
+
+  if (north) {
+    return west ? 'nw' : east ? 'ne' : 'n';
+  }
+  if (south) {
+    return west ? 'sw' : east ? 'se' : 's';
+  }
+  return west ? 'w' : 'e';
+};
+
+/** The five cursor names veil.html knows, plus the absent one: `crosshair`. */
+type CursorName = 'move' | 'nwse' | 'nesw' | 'ns' | 'ew' | null;
+
+/** What the pointer should look like over a zone it is merely hovering. */
+export const cursorForZone = (zone: Zone): CursorName => {
+  switch (zone) {
+    case 'nw':
+    case 'se':
+      return 'nwse';
+    case 'ne':
+    case 'sw':
+      return 'nesw';
+    case 'n':
+    case 's':
+      return 'ns';
+    case 'w':
+    case 'e':
+      return 'ew';
+    case 'inside':
+      return 'move';
+    case 'outside':
+      return null;
+  }
+};
+
+/**
+ * How a grip re-anchors the drag: which corner stays put, and which of the
+ * pointer's two coordinates the moving corner takes.
+ *
+ * A corner grip follows both. A side grip follows one and pins the other to the
+ * edge that is not moving - which is what keeps a north drag from dragging the
+ * left and right edges with it.
+ */
+export interface Grab {
+  readonly anchor: Point;
+  readonly followX: boolean;
+  readonly followY: boolean;
+  readonly pinned: Point;
+}
+
+/**
+ * Where the moving corner goes for a pointer at `point`.
+ *
+ * The pin is not a detail: without it, grabbing the north edge would take the
+ * pointer's x as well and the rectangle would collapse to a line the instant it
+ * was touched. Used at the press AND on every move, so the two cannot disagree.
+ */
+export const movingCorner = (grab: Grab, point: Point): Point => ({
+  x: grab.followX ? point.x : grab.pinned.x,
+  y: grab.followY ? point.y : grab.pinned.y,
+});
+
+/**
+ * The anchor rule, in one place. Mirrored in `capture.rs`'s test model, where
+ * it is under test at every one of the eight grips.
+ *
+ * Returns `null` for the two zones that are not a resize.
+ */
+export const grabFor = (zone: Zone, rect: Rect): Grab | null => {
+  const both = (anchor: Point): Grab => ({
+    anchor,
+    followX: true,
+    followY: true,
+    pinned: anchor,
+  });
+
+  switch (zone) {
+    case 'nw':
+      return both({ x: rect.right, y: rect.bottom });
+    case 'ne':
+      return both({ x: rect.left, y: rect.bottom });
+    case 'sw':
+      return both({ x: rect.right, y: rect.top });
+    case 'se':
+      return both({ x: rect.left, y: rect.top });
+    case 'n':
+      return {
+        anchor: { x: rect.left, y: rect.bottom },
+        followX: false,
+        followY: true,
+        pinned: { x: rect.right, y: rect.bottom },
+      };
+    case 's':
+      return {
+        anchor: { x: rect.left, y: rect.top },
+        followX: false,
+        followY: true,
+        pinned: { x: rect.right, y: rect.top },
+      };
+    case 'w':
+      return {
+        anchor: { x: rect.right, y: rect.top },
+        followX: true,
+        followY: false,
+        pinned: { x: rect.right, y: rect.bottom },
+      };
+    case 'e':
+      return {
+        anchor: { x: rect.left, y: rect.top },
+        followX: true,
+        followY: false,
+        pinned: { x: rect.left, y: rect.bottom },
+      };
+    case 'inside':
+    case 'outside':
+      return null;
+  }
+};
+
+/**
+ * Reads a length token as a number of CSS pixels.
+ *
+ * `rem` has to be handled: a custom property is substituted as written, so
+ * `--space-3` reaches here as `0.75rem` and not as `12px`. Converting against
+ * the root font size is also what makes these two lengths follow Windows text
+ * scaling, like every other rem in this design system.
+ *
+ * Anything else THROWS, at load, during the preheat. A fallback number would be
+ * the second copy of a token that tokens.css opens by forbidding, and - worse -
+ * would let a mistyped token pass as a plausible 12 px that nobody would ever
+ * look at again.
+ */
+export const lengthInPixels = (raw: string, rootFontSize: number): number => {
+  const text = raw.trim();
+  const value = Number.parseFloat(text);
+
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`"${raw}" is not a positive length`);
+  }
+  if (text.endsWith('px')) {
+    return value;
+  }
+  if (text.endsWith('rem')) {
+    return value * rootFontSize;
+  }
+
+  throw new Error(`"${raw}" is a length in a unit this page cannot resolve`);
+};
+
+// ---------------------------------------------------------------------------
+// THE PAGE.
+// ---------------------------------------------------------------------------
+
 const frame = document.getElementById('frame');
 const selection = document.getElementById('selection');
 const edge = document.getElementById('edge');
+const hint = document.getElementById('hint');
+const notice = document.getElementById('notice');
 
 // Not a defensive nicety: without these nodes there is nothing to paint and
 // nothing to draw on, and the failure would otherwise surface as an
@@ -113,6 +397,45 @@ if (!(selection instanceof HTMLElement)) {
 if (!(edge instanceof HTMLElement)) {
   throw new Error('Cannot run the veil: #edge is missing from veil.html');
 }
+// Same reasoning, and the same moment. A veil that lost its keyboard line would
+// stop telling anyone that Enter copies - and Enter is now the only validation
+// that is guaranteed to exist, the double-click being a convenience.
+if (!(hint instanceof HTMLElement)) {
+  throw new Error('Cannot run the veil: #hint is missing from veil.html');
+}
+if (!(notice instanceof HTMLElement)) {
+  throw new Error('Cannot run the veil: #notice is missing from veil.html');
+}
+
+const root = document.documentElement;
+
+/**
+ * The two geometry tokens, resolved once during the preheat.
+ *
+ * Read from CSS rather than typed here: `src/design/tokens.css` forbids a
+ * second list of its values in TypeScript, and a hit-testing distance that
+ * disagreed with the dot drawn on the screen is exactly the kind of drift that
+ * rule exists for. The cost is one style read, seconds before any shortcut.
+ */
+const tokenPixels = (name: string): number => {
+  const computed = getComputedStyle(root);
+  const rootFontSize = Number.parseFloat(computed.fontSize);
+  const raw = computed.getPropertyValue(name);
+
+  try {
+    return lengthInPixels(raw, rootFontSize);
+  } catch (error: unknown) {
+    throw new Error(
+      `Cannot run the veil: ${name} does not resolve to a length (${String(error)})`,
+    );
+  }
+};
+
+/** Width of the ring of grab zones, outside the rectangle. */
+const GRIP_OUTSET = tokenPixels('--veil-grip-outset');
+
+/** The shortest side that still has room for a midpoint dot. */
+const GRIP_ROOM = tokenPixels('--veil-grip-room');
 
 /**
  * The run currently being shown. An image whose decode finishes after a newer
@@ -125,28 +448,58 @@ if (!(edge instanceof HTMLElement)) {
  */
 let currentRun = 0;
 
-/** Where the drag started, in CSS pixels. `null` when no drag is in progress. */
-let anchor: { x: number; y: number } | null = null;
+/**
+ * THE SELECTION: two absolute corners, or nothing. Read the header before
+ * replacing this with an origin and a size.
+ *
+ * It now OUTLIVES the drag that made it - that is the whole of this lot. The
+ * rectangle stays on screen after the hand lifts, wearing its grips, until
+ * Enter or a double-click copies it or Escape throws it away.
+ */
+let corners: { anchor: Point; pointer: Point } | null = null;
 
-/** The pointer that owns the drag, so a second finger cannot hijack it. */
-let dragPointer: number | null = null;
+/** What is happening under the hand right now, if anything. */
+type Gesture =
+  | { readonly kind: 'corner'; readonly grab: Grab }
+  | { readonly kind: 'move'; readonly hold: Point; readonly size: Point };
+
+let gesture: Gesture | null = null;
+
+/** The pointer that owns the gesture, so a second finger cannot hijack it. */
+let gesturePointer: number | null = null;
 
 /**
- * Clears everything the page is showing and forgets the run in flight.
+ * The geometry as it was before the gesture started.
  *
- * `currentRun` is invalidated FIRST: a decode still in flight must not
- * acknowledge a run the user has just finished with. Without that line a
- * cancelled or completed capture could still be filed as a successful
- * measurement, which is exactly how a median gets flattered.
+ * `pointercancel` restores it. It used to hide the selection instead, which is
+ * right for a drag that was drawing a new rectangle and wrong for every other
+ * case: the system taking the pointer away in the middle of a resize would have
+ * thrown away a rectangle the user had already drawn and never asked to lose.
  */
-const reset = (): void => {
-  currentRun = 0;
-  anchor = null;
-  dragPointer = null;
-  selection.hidden = true;
-  frame.hidden = true;
-  frame.removeAttribute('src');
+let before: { anchor: Point; pointer: Point } | null = null;
+
+/** The cursor currently written on the root, so it is written only on change. */
+let cursor: CursorName = null;
+
+const setCursor = (next: CursorName): void => {
+  if (next === cursor) {
+    return;
+  }
+  cursor = next;
+  if (next === null) {
+    root.removeAttribute('data-veil-cursor');
+  } else {
+    root.setAttribute('data-veil-cursor', next);
+  }
 };
+
+/** The four edges of the current selection, normalised. */
+const rectOf = (pair: { anchor: Point; pointer: Point }): Rect => ({
+  left: Math.min(pair.anchor.x, pair.pointer.x),
+  top: Math.min(pair.anchor.y, pair.pointer.y),
+  right: Math.max(pair.anchor.x, pair.pointer.x),
+  bottom: Math.max(pair.anchor.y, pair.pointer.y),
+});
 
 /**
  * Keeps a pointer coordinate inside the veil document.
@@ -162,40 +515,109 @@ const reset = (): void => {
  * failure.
  */
 const clamp = (value: number, limit: number): number =>
-  Math.min(Math.max(value, 0), limit);
+  Math.min(Math.max(value, 0), Math.max(limit, 0));
 
 /** The pointer position, clamped to the viewport. */
-const at = (event: PointerEvent): { x: number; y: number } => ({
+const at = (event: PointerEvent): Point => ({
   x: clamp(event.clientX, window.innerWidth),
   y: clamp(event.clientY, window.innerHeight),
 });
 
 /**
- * Lays the selection rectangle over the two corners.
+ * Lays the selection rectangle over its two corners, and says which midpoint
+ * dots have room to be drawn.
  *
  * Written straight to the style, not deferred to a `requestAnimationFrame`:
  * the browser already coalesces pointer moves, and a frame of deferral would be
  * a frame of lag between the hand and the rectangle. The selection is drawn
  * after the veil is painted, so none of this is inside the 150 ms budget.
  */
-const drawSelection = (
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-): void => {
-  selection.style.left = `${Math.min(from.x, to.x)}px`;
-  selection.style.top = `${Math.min(from.y, to.y)}px`;
-  selection.style.width = `${Math.abs(to.x - from.x)}px`;
-  selection.style.height = `${Math.abs(to.y - from.y)}px`;
+const drawSelection = (pair: { anchor: Point; pointer: Point }): void => {
+  const rect = rectOf(pair);
+  const width = rect.right - rect.left;
+  const height = rect.bottom - rect.top;
+
+  selection.style.left = `${rect.left}px`;
+  selection.style.top = `${rect.top}px`;
+  selection.style.width = `${width}px`;
+  selection.style.height = `${height}px`;
+
+  // Only about what is DRAWN. The zones stay whole either way - see the rule in
+  // veil.html. `toggle` with a force argument writes nothing when the class is
+  // already in the state asked for, so a move that does not cross the threshold
+  // costs no style invalidation.
+  selection.classList.toggle('has-width', width >= GRIP_ROOM);
+  selection.classList.toggle('has-height', height >= GRIP_ROOM);
+
   selection.hidden = false;
 };
 
-window.__clicheShow = (source: string, run: number): void => {
-  currentRun = run;
-  // A rectangle left over from the previous capture must not appear over the
-  // new one, even for a frame.
-  anchor = null;
-  dragPointer = null;
+/** Puts the refusal away. Called as soon as the user acts again. */
+const clearNotice = (): void => {
+  if (!notice.hidden) {
+    notice.hidden = true;
+    notice.textContent = '';
+  }
+};
+
+/**
+ * Hands the pointer back, if this page ever took it.
+ *
+ * `hasPointerCapture` first: releasing a capture that was never taken throws,
+ * and every caller of this is on a path that must not.
+ */
+const releaseCapture = (): void => {
+  if (gesturePointer === null) {
+    return;
+  }
+  if (root.hasPointerCapture(gesturePointer)) {
+    root.releasePointerCapture(gesturePointer);
+  }
+};
+
+/**
+ * Clears everything the page is showing and forgets the run in flight.
+ *
+ * `currentRun` is invalidated FIRST: a decode still in flight must not
+ * acknowledge a run the user has just finished with. Without that line a
+ * cancelled or completed capture could still be filed as a successful
+ * measurement, which is exactly how a median gets flattered.
+ *
+ * IT RELEASES THE POINTER CAPTURE, and that line is a repair. Escape pressed
+ * with the button still down used to leave `documentElement` owning the
+ * pointer: the veil was gone, the capture was not, and the next window to see
+ * that pointer was not the one under it.
+ */
+const reset = (): void => {
+  currentRun = 0;
+  corners = null;
+  gesture = null;
+  before = null;
+  releaseCapture();
+  gesturePointer = null;
+  setCursor(null);
   selection.hidden = true;
+  hint.hidden = true;
+  clearNotice();
+  frame.hidden = true;
+  frame.removeAttribute('src');
+};
+
+window.__clicheShow = (source: string, run: number): void => {
+  // A rectangle, a hint or a refusal left over from the previous capture must
+  // not appear over the new one, even for a frame. `reset` cannot be used here:
+  // it clears `currentRun`, which is set immediately below.
+  corners = null;
+  gesture = null;
+  before = null;
+  releaseCapture();
+  gesturePointer = null;
+  setCursor(null);
+  selection.hidden = true;
+  hint.hidden = true;
+  clearNotice();
+
+  currentRun = run;
 
   // Hidden first, so that the veil is black rather than showing the PREVIOUS
   // capture while the new one decodes. The window is made visible by Rust just
@@ -235,77 +657,31 @@ window.__clicheShow = (source: string, run: number): void => {
     });
 };
 
-window.addEventListener('pointerdown', (event: PointerEvent) => {
-  // The primary button only: a right-click is not a selection. And nothing is
-  // drawn when no capture is on screen, which is what `currentRun === 0` means.
-  if (event.button !== 0 || currentRun === 0 || anchor !== null) {
+/**
+ * Sends the rectangle to Rust to be cut and copied.
+ *
+ * Reached by Enter and by a double-click inside the selection, and by nothing
+ * else. Lifting the hand no longer copies: a gesture that copied on release
+ * could not also be the gesture that begins a resize.
+ */
+const commit = (): void => {
+  if (corners === null || currentRun === 0) {
     return;
   }
 
-  // Stops WebView2 starting a native drag or a text selection under the hand.
-  event.preventDefault();
-
-  anchor = at(event);
-  dragPointer = event.pointerId;
-  drawSelection(anchor, anchor);
-
-  // The pointer may leave this window mid-drag - onto a second monitor, or off
-  // the edge of the screen. Without capture the moves and the release would go
-  // elsewhere and the rectangle would freeze mid-gesture. Capture is an
-  // improvement, not a requirement, so a refusal is reported and the drag
-  // continues.
-  try {
-    document.documentElement.setPointerCapture(event.pointerId);
-  } catch (error: unknown) {
-    console.error('[cliche] veil: could not capture the pointer', error);
-  }
-});
-
-window.addEventListener('pointermove', (event: PointerEvent) => {
-  if (anchor === null || event.pointerId !== dragPointer) {
-    return;
-  }
-
-  event.preventDefault();
-  drawSelection(anchor, at(event));
-});
-
-window.addEventListener('pointerup', (event: PointerEvent) => {
-  if (anchor === null || event.pointerId !== dragPointer) {
-    return;
-  }
-
-  const from = anchor;
-  const to = at(event);
+  const rect = rectOf(corners);
   const run = currentRun;
 
-  anchor = null;
-  dragPointer = null;
-  if (document.documentElement.hasPointerCapture(event.pointerId)) {
-    document.documentElement.releasePointerCapture(event.pointerId);
-  }
-
-  // A click is not a drag. Under one CSS pixel in either axis there is no
-  // rectangle to cut - at 125 % it would not even cover a whole physical pixel,
-  // and Rust would refuse it. The page forgets the gesture rather than sending
-  // an error round trip for a stray click on the veil.
-  if (Math.abs(to.x - from.x) < 1 || Math.abs(to.y - from.y) < 1) {
-    selection.hidden = true;
-    return;
-  }
-
-  // The rectangle stops being drawn as soon as the hand lifts, but the frozen
-  // image stays: if Rust refuses the selection, the veil is still usable.
-  selection.hidden = true;
+  clearNotice();
 
   // The four numbers go over as measured. No scale, no rounding - see the file
   // header.
   void invoke('veil_selected', {
     run,
-    x0: from.x,
-    y0: from.y,
-    x1: to.x,
-    y1: to.y,
+    x0: rect.left,
+    y0: rect.top,
+    x1: rect.right,
+    y1: rect.bottom,
   })
     .then(() => {
       // Only if a newer capture has not started in the meantime. Same reasoning
@@ -316,32 +692,252 @@ window.addEventListener('pointerup', (event: PointerEvent) => {
       }
     })
     .catch((error: unknown) => {
-      // Deliberately NOT dismissed. The frozen image stays on screen so the
-      // user can draw again or press Escape; a veil that vanished on an error
-      // would be indistinguishable from a capture that worked.
+      // SHOWN, not merely logged - and that is a repair. Rust refuses a
+      // selection below `MIN_COPYABLE_AREA_PX` with a sentence that names the
+      // size, the area and the threshold (`clipboard::too_small_line`, under
+      // test there). It used to go to `console.error` alone: with Enter as the
+      // validation, a refusal nobody displays is a screen that does not answer
+      // a key.
+      //
+      // The selection stays exactly as it was, and stays editable: the fix for
+      // "too small" is to make it bigger, which is now a gesture away.
       console.error('[cliche] veil: the selection was refused', error);
+      if (currentRun !== run) {
+        return;
+      }
+      notice.textContent =
+        typeof error === 'string' ? error : `the selection was refused: ${String(error)}`;
+      notice.hidden = false;
     });
-});
+};
 
-window.addEventListener('pointercancel', (event: PointerEvent) => {
-  if (event.pointerId !== dragPointer) {
+window.addEventListener('pointerdown', (event: PointerEvent) => {
+  // The primary button only: a right-click is not a selection. And nothing is
+  // drawn when no capture is on screen, which is what `currentRun === 0` means.
+  if (event.button !== 0 || currentRun === 0 || gesture !== null) {
     return;
   }
 
-  // The system took the pointer away - a gesture, a touch cancelled. The drag
-  // is abandoned; the veil stays open because the user never asked to close it.
-  anchor = null;
-  dragPointer = null;
-  selection.hidden = true;
+  // Stops WebView2 starting a native drag or a text selection under the hand.
+  event.preventDefault();
+
+  clearNotice();
+
+  const point = at(event);
+  const zone =
+    corners === null ? 'outside' : hitTest(rectOf(corners), point, GRIP_OUTSET);
+
+  before = corners;
+
+  if (corners !== null && zone === 'inside') {
+    const rect = rectOf(corners);
+    // The offset from the rectangle's ORIGIN to the hand, frozen at the press.
+    // What gets clamped further down is that origin, never the pointer: clamp
+    // the pointer and the far edge walks off the screen while the near one
+    // stays put.
+    gesture = {
+      kind: 'move',
+      hold: { x: point.x - rect.left, y: point.y - rect.top },
+      size: { x: rect.right - rect.left, y: rect.bottom - rect.top },
+    };
+    setCursor('move');
+  } else {
+    const grab = corners === null ? null : grabFor(zone, rectOf(corners));
+    if (grab === null) {
+      // A fresh rectangle: a draw is a resize whose anchor is where the hand
+      // went down. One code path, not two.
+      gesture = {
+        kind: 'corner',
+        grab: { anchor: point, followX: true, followY: true, pinned: point },
+      };
+      corners = { anchor: point, pointer: point };
+    } else {
+      gesture = { kind: 'corner', grab };
+      corners = { anchor: grab.anchor, pointer: movingCorner(grab, point) };
+    }
+    setCursor(cursorForZone(zone));
+  }
+
+  gesturePointer = event.pointerId;
+  drawSelection(corners);
+
+  // The pointer may leave this window mid-drag - onto a second monitor, or off
+  // the edge of the screen. Without capture the moves and the release would go
+  // elsewhere and the rectangle would freeze mid-gesture. Capture is an
+  // improvement, not a requirement, so a refusal is reported and the drag
+  // continues.
+  try {
+    root.setPointerCapture(event.pointerId);
+  } catch (error: unknown) {
+    console.error('[cliche] veil: could not capture the pointer', error);
+  }
+});
+
+window.addEventListener('pointermove', (event: PointerEvent) => {
+  if (gesture === null || gesturePointer === null) {
+    // No gesture: the cursor follows the zone under the hand, so the ring can
+    // be found before it is grabbed.
+    if (corners !== null && currentRun !== 0) {
+      setCursor(cursorForZone(hitTest(rectOf(corners), at(event), GRIP_OUTSET)));
+    }
+    return;
+  }
+
+  if (event.pointerId !== gesturePointer) {
+    return;
+  }
+
+  event.preventDefault();
+  const point = at(event);
+
+  if (gesture.kind === 'move') {
+    // The ORIGIN is clamped, not the pointer. `Math.max(limit, 0)` inside
+    // `clamp` covers a selection wider than the viewport, which a resize can
+    // produce at the very edge.
+    const left = clamp(point.x - gesture.hold.x, window.innerWidth - gesture.size.x);
+    const top = clamp(point.y - gesture.hold.y, window.innerHeight - gesture.size.y);
+    corners = {
+      anchor: { x: left, y: top },
+      pointer: { x: left + gesture.size.x, y: top + gesture.size.y },
+    };
+    // Held to the gesture: leaving the interior mid-move must not turn the
+    // cursor into a resize arrow.
+    setCursor('move');
+  } else {
+    const { grab } = gesture;
+    const moving = movingCorner(grab, point);
+    corners = { anchor: grab.anchor, pointer: moving };
+
+    // Recomputed from the LIVE geometry on every frame, never frozen at the
+    // press: drag a corner past its opposite one and the diagonal really has
+    // swapped, so nwse must become nesw under the hand.
+    if (grab.followX && grab.followY) {
+      const rightOfAnchor = moving.x >= grab.anchor.x;
+      const belowAnchor = moving.y >= grab.anchor.y;
+      setCursor(rightOfAnchor === belowAnchor ? 'nwse' : 'nesw');
+    } else {
+      setCursor(grab.followX ? 'ew' : 'ns');
+    }
+  }
+
+  drawSelection(corners);
+});
+
+window.addEventListener('pointerup', (event: PointerEvent) => {
+  if (gesture === null || event.pointerId !== gesturePointer) {
+    return;
+  }
+
+  gesture = null;
+  releaseCapture();
+  gesturePointer = null;
+
+  // A click is not a drag. Under one CSS pixel in either axis there is no
+  // rectangle to cut - at 125 % it would not even cover a whole physical pixel,
+  // and Rust would refuse it. What was on screen before the press comes back:
+  // a stray click on a rectangle the user has already drawn must not destroy
+  // it, and before the first drag there is nothing to come back to.
+  if (corners !== null) {
+    const rect = rectOf(corners);
+    if (rect.right - rect.left < 1 || rect.bottom - rect.top < 1) {
+      corners = before;
+      if (corners === null) {
+        selection.hidden = true;
+      } else {
+        drawSelection(corners);
+      }
+    }
+  }
+
+  before = null;
+  setCursor(
+    corners === null
+      ? null
+      : cursorForZone(hitTest(rectOf(corners), at(event), GRIP_OUTSET)),
+  );
+
+  // The keyboard line, revealed the first time a hand lifts and not before.
+  // Everything it names is available from this moment: there is a rectangle to
+  // copy. It costs nothing at opening - see the note in veil.html.
+  if (corners !== null) {
+    hint.hidden = false;
+  }
+});
+
+/**
+ * A double-click inside the selection copies it.
+ *
+ * A CONVENIENCE, never the only route: Enter does the same thing and is the one
+ * that is guaranteed to reach here. `pointerdown` calls `preventDefault`, which
+ * suppresses the compatibility mouse events; `click` and `dblclick` are
+ * documented as unaffected by that, but this has NOT been verified in WebView2
+ * on this machine - the veil cannot be opened without taking over the screen of
+ * whoever is working on it.
+ */
+window.addEventListener('dblclick', (event: MouseEvent) => {
+  if (corners === null || currentRun === 0) {
+    return;
+  }
+
+  const point = {
+    x: clamp(event.clientX, window.innerWidth),
+    y: clamp(event.clientY, window.innerHeight),
+  };
+  if (hitTest(rectOf(corners), point, GRIP_OUTSET) !== 'inside') {
+    return;
+  }
+
+  event.preventDefault();
+  commit();
+});
+
+window.addEventListener('pointercancel', (event: PointerEvent) => {
+  if (event.pointerId !== gesturePointer) {
+    return;
+  }
+
+  // The system took the pointer away - a gesture, a touch cancelled. The veil
+  // stays open because the user never asked to close it, and the geometry goes
+  // back to what it was before this gesture rather than being thrown away:
+  // during a resize or a move there is a rectangle to lose.
+  gesture = null;
+  releaseCapture();
+  gesturePointer = null;
+  corners = before;
+  before = null;
+  setCursor(null);
+
+  if (corners === null) {
+    selection.hidden = true;
+  } else {
+    drawSelection(corners);
+  }
 });
 
 window.addEventListener('keydown', (event: KeyboardEvent) => {
+  if (event.key === 'Enter') {
+    if (corners === null || currentRun === 0) {
+      return;
+    }
+    event.preventDefault();
+    commit();
+    return;
+  }
+
   if (event.key !== 'Escape') {
     return;
   }
 
   event.preventDefault();
 
+  // ONE MEANING FOR THIS KEY: cancel the capture. Including in the middle of a
+  // drag, where it used to close the veil while leaving the pointer captured -
+  // `reset` now ends the gesture properly, which is the actual defect.
+  //
+  // Giving Escape a second meaning - "abandon this gesture, keep the veil" -
+  // was considered and refused: the user would have to know which of the two
+  // states they are in before pressing a key whose whole value is that it
+  // always does the same thing.
   reset();
 
   void invoke('veil_dismissed').catch((error: unknown) => {

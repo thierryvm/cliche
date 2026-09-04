@@ -295,6 +295,31 @@ for (const [name, theme] of THEMES) {
   }
 }
 
+/*
+ * The veil's resize grips, against their own two-tone ring.
+ *
+ * `--veil-handle` carries a promise in tokens.css: the grip wears "the same
+ * two-tone stroke, so they stay findable over any pixel". That construction
+ * only works if the FILL can be told apart from the RING - and that pairing was
+ * never measured. The interaction spec of 4 September 2026 computed it by hand
+ * and predicted a failure; a hand calculation is a direction, not a fact, so it
+ * is measured here.
+ *
+ * 3:1 rather than 4.5:1: a grip is the boundary of a control, WCAG 1.4.11, not
+ * text.
+ */
+for (const [name, theme] of THEMES) {
+  for (const ring of ['--veil-stroke-light', '--veil-stroke-dark']) {
+    record(
+      name,
+      '--veil-handle',
+      ring,
+      ratio(colour(theme, '--veil-handle'), colour(theme, ring)),
+      3.0,
+    );
+  }
+}
+
 /* Glass: three alpha regimes, two extreme backdrops, both themes. */
 const GLASS_MODES = [
   ['glass', {}],

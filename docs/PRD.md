@@ -66,10 +66,20 @@ fonctionnalités.
 mal. L'état est volatil : un rafraîchissement, et il a disparu.
 
 **Gestes** : raccourci global → un voile assombrit l'écran gelé → glisser un rectangle
-autour de la zone → relâcher.
+autour de la zone → relâcher → **`Entrée`** (ou double-clic dans la sélection).
 
-**Résultat attendu** : l'image est **déjà dans le presse-papier** quand la souris est
-relâchée. `Ctrl+V` dans une issue GitHub la colle. Aucune fenêtre à chercher, aucun
+> **Modifié le 4 septembre 2026, et c'est un recul assumé sur la vitesse.** Jusque-là,
+> relâcher copiait. Relâcher **pose** désormais la sélection : on peut la
+> redimensionner par ses huit poignées et la déplacer avant de valider, parce qu'un
+> rectangle mal tracé coûtait un retracé complet. Le prix est **un geste de plus sur
+> CHAQUE capture**, y compris celles qui étaient déjà bonnes. Décision de Thierry ;
+> l'alternative écartée était de garder « relâcher copie » et de n'ouvrir l'édition
+> qu'en tenant `Maj` au relâchement — chemin rapide intact, mais il faut le savoir, et
+> au moment où l'on relâche on n'a pas toujours vu que le rectangle est mauvais.
+> Réversible : la bascule est dans `src/veil/main.ts`.
+
+**Résultat attendu** : l'image est dans le presse-papier **à la validation** — une
+frappe après le relâchement. `Ctrl+V` dans une issue GitHub la colle. Aucune fenêtre à chercher, aucun
 bouton « copier » à trouver. Si l'utilisateur ne fait rien d'autre, il ne reste rien à
 ranger.
 
@@ -104,7 +114,8 @@ dessiné par-dessus une image intacte.
 **Déclencheur, temps 1** : pendant une session de travail, trois ou quatre captures sont
 prises comme aide-mémoire. Aucune n'est annotée, aucune n'est envoyée.
 
-**Gestes, temps 1** : raccourci, rectangle, relâcher. Rien de plus. Les images sont
+**Gestes, temps 1** : raccourci, rectangle, relâcher, `Entrée`. Rien de plus — voir
+le cas 1 pour ce que ce quatrième geste a acheté, et ce qu'il coûte. Les images sont
 rangées automatiquement (ou pas du tout, si l'utilisateur a coupé l'enregistrement
 automatique).
 
@@ -136,8 +147,12 @@ croit bonne.
 **Déclencheur** : la souris a glissé, le rectangle est décalé, ou il manque une ligne en
 bas. Variante fréquente : le bouton a été relâché par accident, presque tout de suite.
 
-**Gestes attendus** : `Échap` referme le voile **sans rien capturer et sans rien
-enregistrer** ; le raccourci relance immédiatement une sélection propre. Un rectangle
+**Gestes attendus, depuis le 4 septembre 2026** : le rectangle relâché est **posé, pas
+validé** — on le corrige sur place, en tirant l'une de ses huit poignées ou en le
+saisissant à l'intérieur pour le déplacer, puis `Entrée`. C'est la réponse de premier
+rang à ce cas, et c'est ce que les poignées ont acheté.
+`Échap` reste la sortie : il referme le voile **sans rien capturer et sans rien
+enregistrer**, et le raccourci relance immédiatement une sélection propre. Un rectangle
 d'aire nulle ou dérisoire (un simple clic) ne produit **pas** de fichier ni d'entrée
 dans la bibliothèque.
 

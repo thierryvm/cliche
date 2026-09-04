@@ -219,10 +219,40 @@
   --veil-stroke-dark: #000000;
   --veil-stroke-width: 1px;
 
-  /* The eight drag handles. Accent fill, wearing the same two-tone stroke, so
-     they stay findable over any pixel. */
-  --veil-handle: var(--accent);
+  /* The eight drag grips. Accent fill, wearing the same two-tone stroke, so
+     they stay findable over any pixel.
+
+     PINNED to a literal on 4 September 2026, and it had to be. This was
+     `var(--accent)`, which the dark theme redefines - so the fill DID change
+     with the theme, in a block whose own header says it is not themed. Worse,
+     it broke the promise in the line above: measured, the dark accent against
+     the light half of the ring is 2.03:1, under the 3:1 a control boundary
+     needs, so the ring stopped telling the grip apart from itself. The value
+     kept is the light theme's accent, the only one that clears both halves.
+     A literal is right here for the same reason --veil-stroke-light is one:
+     this block paints on the user's screenshot, where our themes do not exist.
+     RULE: 6.15:1 against the light half, 3.41:1 against the dark. That 0.41 is
+     the whole margin - scripts/check-contrast.mjs fails if it is spent. */
+  --veil-handle: #0b6b7d;
   --veil-handle-size: 0.5rem;
+
+  /* How far outside the selection the ring of grab zones reaches. The eight
+     grips live ENTIRELY in that ring: nothing is grabbable inside the
+     rectangle, so the pixels the user is judging are never covered, and
+     "move by the interior" survives down to the smallest legal selection of
+     8 x 8 px - the 64 px area floor clipboard.rs enforces.
+     RULE: this is also the width of the moat where "drag elsewhere to start a
+     new rectangle" is unavailable. Growing it buys almost nothing on a long
+     edge and costs that moat on all four sides. */
+  --veil-grip-outset: var(--space-3);
+
+  /* Shortest side that earns a drawn midpoint dot: four grip footprints. Below
+     it the three dots of one side touch and read as a bar, so two adjacent
+     grips become indistinguishable BY EYE. The zone still resizes and the
+     cursor still says so - the affordance moves from the dot to the cursor,
+     it does not disappear. Corner dots are always drawn: their cell never
+     shrinks. */
+  --veil-grip-room: var(--space-7);
 
   /* ------------------------------------------------------------------ *
    * SPACING — base unit 4 px, and its multiples. Unequal by construction:
@@ -244,7 +274,16 @@
   /* Minimum hit target, 44 px. Windows laptops are touch machines and this
      app is driven under time pressure. WCAG 2.2 floors at 24; 44 is Apple's
      figure and the one that matches a thumb.
-     RULE: applies to anything clickable, including icon-only buttons. */
+     RULE: applies to anything clickable, including icon-only buttons.
+     EXCEPTION, 4 September 2026 - THE VEIL'S RESIZE GRIPS. Eight disjoint
+     44 px zones demand a selection of 132 x 132 px; the smallest legal one is
+     8 x 8, and that 8 x 8 is under test in clipboard.rs. Factor 16: the rule
+     is not inconvenient here, it is arithmetically impossible. What --hit-min
+     protects is the cost of a miss, and on the veil that cost is nil - a miss
+     lands on "move" or on "start a new rectangle", both undone by the next
+     gesture, unlike an icon button where a miss fires the wrong action. The
+     grips use --veil-grip-outset instead. Written here rather than quietly in
+     a stylesheet: a rule bypassed in silence invites five more. */
   --hit-min: 2.75rem;
 
   /* ------------------------------------------------------------------ *

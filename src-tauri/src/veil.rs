@@ -961,6 +961,151 @@ pub fn parse_bench(raw: Option<&str>) -> (Option<usize>, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::Path;
+
+    /// Whether a capability file declares a window, read literally.
+    ///
+    /// NOT a JSON parser. This crate does not depend on `serde_json` and lot 2
+    /// is not the place to add a dependency for four lines. It finds the
+    /// `"windows"` key, takes the array behind it and compares each entry with
+    /// the quoted label.
+    ///
+    /// Its blind spots all fail in the SAFE direction: a shape it cannot read
+    /// makes it answer "not declared", which turns the guard below red rather
+    /// than letting it pass quietly. The fixtures test pins that.
+    fn declares_window(capability: &str, label: &str) -> bool {
+        let Some((_, after_key)) = capability.split_once("\"windows\"") else {
+            return false;
+        };
+        let Some(open) = after_key.find('[') else {
+            return false;
+        };
+        let Some(close) = after_key[open..].find(']') else {
+            return false;
+        };
+
+        let quoted = format!("\"{label}\"");
+        after_key[open + 1..open + close]
+            .split(',')
+            .any(|entry| entry.trim() == quoted)
+    }
+
+    /// The verdict itself, kept away from the filesystem so that BOTH its rows
+    /// can be tested.
+    ///
+    /// The `true` row cannot be reached against the real tree from a test: it
+    /// would mean creating `src-tauri/permissions/`, which is precisely the act
+    /// that arms the manifest. So the reading of the tree and the rule are two
+    /// functions, and the rule is exercised on all four combinations.
+    fn acl_would_lock_the_veil_out(has_permissions_dir: bool, veil_is_listed: bool) -> bool {
+        has_permissions_dir && !veil_is_listed
+    }
+
+    #[test]
+    fn the_acl_rule_fires_on_exactly_one_of_its_four_combinations() {
+        // Today's state, and the one that must stay silent: no manifest, no
+        // capability naming the veil.
+        assert!(!acl_would_lock_the_veil_out(false, false));
+        assert!(!acl_would_lock_the_veil_out(false, true));
+        // The capability was added ahead of the manifest - the fix, not a fault.
+        assert!(!acl_would_lock_the_veil_out(true, true));
+        // The bomb: a manifest exists and the veil is in no capability.
+        assert!(
+            acl_would_lock_the_veil_out(true, false),
+            "this is the one case the build must go red on"
+        );
+    }
+
+    #[test]
+    fn the_capability_reader_recognises_a_window_and_refuses_a_near_miss() {
+        // Without this, the guard below could be green because the reader
+        // cannot see anything at all.
+        let listing = r#"{ "windows": ["main", "veil"], "permissions": [] }"#;
+        assert!(declares_window(listing, "main"));
+        assert!(declares_window(listing, VEIL_WINDOW_LABEL));
+
+        let only_main = r#"{ "windows": ["main"], "permissions": ["core:default"] }"#;
+        assert!(declares_window(only_main, "main"));
+        assert!(
+            !declares_window(only_main, VEIL_WINDOW_LABEL),
+            "this is today's default.json; reading `veil` into it would disarm the guard"
+        );
+
+        // A description mentioning the veil is not a declaration.
+        let prose = r#"{ "description": "not for the veil window", "windows": ["main"] }"#;
+        assert!(!declares_window(prose, VEIL_WINDOW_LABEL));
+
+        // Near misses that a `contains` would wave through.
+        let impostors = r#"{ "windows": ["veil2", "veil-decoy", "Veil"] }"#;
+        assert!(!declares_window(impostors, VEIL_WINDOW_LABEL));
+
+        // Shapes it cannot read must answer "not declared".
+        assert!(!declares_window("{}", VEIL_WINDOW_LABEL));
+        assert!(!declares_window(
+            r#"{ "windows": "veil" }"#,
+            VEIL_WINDOW_LABEL
+        ));
+    }
+
+    #[test]
+    fn the_veil_window_is_capable_the_day_this_application_gets_an_acl_manifest() {
+        // A BOMB WITH A LONG FUSE, defused here.
+        //
+        // `capabilities/default.json` carries `"windows": ["main"]`, and the
+        // veil window is in no capability at all. That costs nothing today:
+        // `ipc.rs` has the reading of `webview/mod.rs:1823` - with no
+        // application ACL manifest, no ACL check runs on this crate's own
+        // commands. The manifest appears the moment `src-tauri/permissions/`
+        // does, and on that day every `veil_*` call would be refused at once,
+        // for a reason nothing in the code would name.
+        let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let capabilities = crate_root.join("capabilities");
+
+        let mut files = 0;
+        let mut listed_main = false;
+        let mut listed_veil = false;
+
+        for entry in fs::read_dir(&capabilities)
+            .unwrap_or_else(|error| panic!("{} must be readable: {error}", capabilities.display()))
+        {
+            let path = entry.expect("a directory entry must be readable").path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+                continue;
+            }
+
+            let text = fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("{} must be readable: {error}", path.display()));
+            files += 1;
+            listed_main |= declares_window(&text, crate::ipc::MAIN_WINDOW_LABEL);
+            listed_veil |= declares_window(&text, VEIL_WINDOW_LABEL);
+        }
+
+        // The two checks that stop this test from passing for the wrong reason:
+        // a wrong path, or a reader that sees nothing in a real file.
+        assert!(
+            files > 0,
+            "no capability file was found in {}; this test would then pass whatever the \
+             application declares",
+            capabilities.display()
+        );
+        assert!(
+            listed_main,
+            "`main` is declared in capabilities/default.json and the scan did not find it, so \
+             the scan - not the application - is what is broken"
+        );
+
+        assert!(
+            !acl_would_lock_the_veil_out(crate_root.join("permissions").is_dir(), listed_veil),
+            "src-tauri/permissions/ now exists, so tauri-build generates an application ACL \
+             manifest and the ACL check starts running on this crate's OWN commands (ipc.rs \
+             quotes the condition). The `{VEIL_WINDOW_LABEL}` window is listed in no capability \
+             file under {}, so veil_painted, veil_selected and veil_dismissed would all be \
+             refused and captures would stop working. Add `{VEIL_WINDOW_LABEL}` to the \
+             `windows` array of a capability granting what the veil needs.",
+            capabilities.display()
+        );
+    }
 
     #[test]
     fn the_four_labels_are_the_ones_the_report_has_to_show_in_order() {
