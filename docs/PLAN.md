@@ -37,6 +37,12 @@ presse-papier. Aucune donnée ne quitte la machine.
 | `docs/UPDATES.md` | **Faut-il** une mise à jour automatique, et ce qu'elle ferait sortir de la machine |
 | `docs/RELEASES.md` | **Comment** on publie une version, et ce qui est déjà prêt pour le jour de l'updater |
 | `docs/PLAN.md` (ici) | **Dans quel ordre** on construit, et ce qui pourrait casser |
+| `docs/MESURES.md` | **Ce qui a été mesuré** : les chiffres, leur date, leur commit, et ce que chaque étape mesure |
+
+Les procédures de séance ne sont PAS des documents du projet : elles servent une
+fois et sortent du dépôt. Décidé par Thierry le 4 septembre 2026, après que deux
+d'entre elles eurent vieilli dans `docs/` en annonçant des SHA périmés. Ce qui
+reste, ce sont les chiffres — dans `MESURES.md`.
 
 ### Distribution — ce qui est prêt, et ce qui reste à activer
 
@@ -217,6 +223,33 @@ de base64.
 
 **Risque n°3** — le voile se photographie lui-même. Constaté le 31 août 2026 sur
 l'outil du cockpit. **Parade** : on capture *avant* d'afficher le voile, jamais l'inverse.
+
+---
+
+## L'ORDRE A CHANGÉ — décidé par Thierry le 4 septembre 2026
+
+Les numéros de lot ci-dessous sont des **identités, pas une séquence**. Ils ne
+sont pas renumérotés : ils servent aussi de titres de cartes et de messages de
+commit, et un numéro qui change de sens en silence coûte plus cher qu'un ordre
+écrit une fois.
+
+**L'application doit d'abord finir avec sa vraie interface, complète et
+agréable.** Le prochain chantier est donc une V1 d'interface qui rassemble :
+
+1. le **lot 2** — registre des raccourcis, et la page Aide qui en dérive ;
+2. la carte **« raccourci de capture réglable »**, dans un écran Réglages ;
+3. le **lot 6** — le système visuel appliqué, ici aux écrans neufs.
+
+Puis, et seulement après cette V1 : lot 3 (capture fenêtre et écran entier),
+lot 4 (éditeur), lot 5 (bibliothèque), lot 7 (page qui défile).
+
+### Les trois décisions produit de cette V1, prises par Thierry le 4 septembre 2026
+
+| Question | Réponse |
+| --- | --- |
+| Que fait l'accueil ? | **Un lanceur** : les actions de capture, en grand, plus un rappel du raccourci actif. Les actions pas encore construites existent et disent qu'elles ne sont pas là. |
+| Barre de titre ? | **Sur mesure, en verre.** Le matériau va jusqu'en haut. À notre charge : déplacement, minimiser, agrandir, fermer, accrochage aux bords, double-clic — et une relecture à 375 px comme partout. |
+| Après une copie ? | **Une confirmation discrète qui s'efface** — « 933×577 copié ». Elle sert aussi à rendre visible un ÉCHEC de copie, qui aujourd'hui ne se voit que dans le terminal. |
 
 ---
 

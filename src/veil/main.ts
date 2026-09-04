@@ -58,6 +58,14 @@
  * 868ba0d, measured 4 September 2026 - displaying the previous capture. That is
  * what was seen as flashing.
  *
+ * A THIRD message leaves this page since the cold-start tracer was added below,
+ * and it is not an acknowledgement: `veil_ready` reports which phase this script
+ * has reached. Its `loaded` call site runs during the preheat, seconds before
+ * any shortcut. Its `show-entered` call site IS inside the `decoded` step, and
+ * fires ONCE per page - on the first capture after launch, the run the fallback
+ * already discards. Runs 2 onward therefore travel the exact path a134cb7
+ * measured. See `reportPhase`, and `veil::veil_ready` in Rust.
+ *
  * ## What `painted` really means
  *
  * The acknowledgement is sent from inside a `requestAnimationFrame` callback
@@ -131,6 +139,62 @@ import {
   movingCorner,
 } from './zones';
 import type { CursorName, Grab, Point, Rect } from './zones';
+
+// ---------------------------------------------------------------------------
+// THE COLD-START TRACER. Added 4 September 2026, and it is an instrument.
+// ---------------------------------------------------------------------------
+
+/**
+ * Reports which phase this script has reached.
+ *
+ * WHAT IT IS FOR. The first capture after a launch does not acknowledge: on
+ * 868ba0d runs 1 and 2 of the benchmark never did within the bench's 3 s, and on
+ * a134cb7 run 1 alone - rescued 250 ms later by `veil::arm_show_fallback`, which
+ * is a delay the user meets at every cold start. Three explanations fit that
+ * observation equally well, and the terminal cannot currently tell them apart:
+ * the script of a never-shown window not running at all, `window.eval` not
+ * reaching such a window, or a first `decode()` simply taking longer than 3 s.
+ * `veil::veil_ready` has the table that reads the lines.
+ *
+ * The union type is the closed list of `veil::READY_PHASES` written a second
+ * time. Rust validates the string anyway - it arrives over IPC and is printed on
+ * a terminal - but a typo here should be a type error, not a refusal discovered
+ * while reading a report.
+ *
+ * No `await`, like every other acknowledgement in this file: nothing needs the
+ * reply, and waiting for one would put a round trip where a post belongs.
+ */
+const reportPhase = (phase: 'loaded' | 'show-entered'): void => {
+  void invoke('veil_ready', { phase }).catch((error: unknown) => {
+    console.error(`[cliche] veil: could not report the phase ${phase}`, error);
+  });
+};
+
+/**
+ * Whether `show-entered` has already been sent for this page.
+ *
+ * The instrument fires once and then costs nothing. See the guard in
+ * `__clicheShow` for why that matters: the second call site is the only part of
+ * this tracer that sits inside a measured step.
+ */
+let phaseShowEnteredReported = false;
+
+// PHASE ONE, and its POSITION is the measurement: the first statement this
+// module executes, above the element lookups below - which throw. A `loaded`
+// line therefore proves the script STARTED, and says nothing about whether it
+// finished; that is exactly the question hypothesis (a) asks.
+//
+// WHAT A MISSING `loaded` LINE DOES NOT PROVE, because the table in
+// `veil::veil_ready` would otherwise be read as more than it is: it proves that
+// no line ARRIVED. Either the script never ran - hypothesis (a) - or outgoing
+// IPC does not leave a window that has never been shown, which would explain the
+// missing `veil_decoded` just as well. The two are told apart by the run-1
+// `show-entered` line: if THAT one arrives while `loaded` never did, IPC out of
+// a hidden window works and it is this call, at module load, that was lost.
+//
+// It runs during the preheat, seconds before any shortcut, so it costs the
+// measured pipeline nothing.
+reportPhase('loaded');
 
 declare global {
   interface Window {
@@ -388,6 +452,25 @@ const reset = (): void => {
 };
 
 window.__clicheShow = (source: string, run: number): void => {
+  // PHASE TWO, on the FIRST line and before `frame` is touched, because what it
+  // has to establish is that this function was ENTERED at all - not that it got
+  // anywhere. `loaded` present and this one missing on run 1 is hypothesis (b):
+  // `window.eval` does not reach a window that has never been shown.
+  //
+  // ONCE PER PAGE, and that guard is the whole reason this instrument can live
+  // on the critical path. This line sits inside the `decoded` step - between
+  // `transport` and the mark `veil_decoded` takes - so an unconditional call
+  // would make every run pay a serialisation and an IPC post, and `decoded`
+  // would stop being comparable with the figure measured on a134cb7. The
+  // question it answers is about the FIRST capture after launch, and that run
+  // is discarded from the measurement anyway: it is the one the fallback
+  // rescues. So the cost lands only where there is no measurement to spoil,
+  // and runs 2 onward are byte-for-byte the path a134cb7 measured.
+  if (!phaseShowEnteredReported) {
+    phaseShowEnteredReported = true;
+    reportPhase('show-entered');
+  }
+
   // A rectangle, a hint or a refusal left over from the previous capture must
   // not appear over the new one, even for a frame. `reset` cannot be used here:
   // it clears `currentRun`, which is set immediately below.

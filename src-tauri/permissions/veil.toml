@@ -1,4 +1,4 @@
-# Application permissions for the four commands the veil window calls.
+# Application permissions for the five commands the veil window calls.
 #
 # WHY THIS DIRECTORY EXISTS AT ALL.
 # `tauri-build` inserts an application manifest under the `__app-acl__` key only
@@ -40,6 +40,11 @@
 # These files are read at the glob `permissions/**/*` and filtered by extension
 # (`tauri-build-2.6.3/src/acl.rs:299-329`, `tauri-utils-2.9.3/src/acl/build.rs:80-85`):
 # a `.md` note dropped in here would be ignored rather than reported.
+
+[[permission]]
+identifier = "allow-veil-ready"
+description = "Lets the veil window report that its script reached a named phase - `loaded` when the module of src/veil/main.ts starts executing, `show-entered` at the head of `__clicheShow`. A COLD-START DIAGNOSTIC added on 4 September 2026: the command prints one line and does nothing else - no mark, no window, no state. The phase is validated against a closed list in Rust before anything is printed, because it is a string the page chooses and a terminal is where it lands."
+commands.allow = ["veil_ready"]
 
 [[permission]]
 identifier = "allow-veil-decoded"
