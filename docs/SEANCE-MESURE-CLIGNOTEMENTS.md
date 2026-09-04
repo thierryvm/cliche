@@ -23,19 +23,40 @@ quoi que ce soit dessus.
 cd F:\PROJECTS\Apps\cliche
 git checkout main
 git pull --ff-only
-git log --oneline -3
+git status --short          # doit ne RIEN afficher
+git log --oneline -1
 ```
 
-Tu dois voir, dans cet ordre :
+Le dernier commit doit être **`security(acl): declare every command and cap each
+window`**, et `git status` doit être muet.
 
-```
-6c55ae9  fix(veil): keep the frozen frame until the copy has actually worked
-26af797  test(veil): put the zone model under test, and stop losing the clipboard failure
-ca0d5bd  feat(veil): make the eight grips real, and measure the colour they needed
+*Ce document listait d'abord trois SHA précis. Ils sont périmés : `main` a reçu
+depuis le manifeste ACL. Un numéro recopié à la main dans une procédure vieillit
+en silence — ce qui compte vraiment, c'est que ton arbre soit propre et à jour
+sur `origin/main`, pas qu'il porte un numéro que j'ai tapé un jour.*
+
+Si `git status` affiche quoi que ce soit, arrête-toi et dis-le-moi : la mesure
+porterait sur autre chose que ce qu'on croit.
+
+### Si le voile ne s'affiche PLUS DU TOUT
+
+Nouveau risque depuis le manifeste ACL, et il faut que tu saches le reconnaître.
+L'application déclare maintenant, commande par commande, quelle fenêtre a le
+droit de l'appeler. C'est vérifié par des tests qui interrogent la vraie table
+de décision — mais **jamais par une exécution réelle** : personne n'a lancé
+Cliché depuis ce changement.
+
+Le symptôme, s'il s'était trompé : rien ne se passe au raccourci, ou l'écran se
+fige sans jamais rendre la main, et le terminal montre une ligne contenant
+`not allowed by ACL`.
+
+Dans ce cas, ne cherche pas : arrête tout et lance
+
+```powershell
+git log --oneline -1        # note le SHA, je veux le message exact
 ```
 
-Si ce n'est pas ça, arrête-toi et dis-le-moi : la mesure porterait sur autre
-chose que ce qu'on croit.
+puis dis-le-moi. Ne mesure rien : le chiffre ne voudrait rien dire.
 
 ## Étape 2 — Les 20 mesures
 

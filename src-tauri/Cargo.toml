@@ -20,7 +20,10 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# Version pinned to the minor line verified on crates.io on 2 September 2026.
+# 2.11.5 is the version verified on crates.io on 2 September 2026. Said
+# precisely, because a comment here once claimed more than the line does: this
+# is a CARET requirement, `>=2.11.5, <3.0.0`, so a `cargo update` may move it to
+# 2.12 or beyond. What actually holds 2.11.5 is Cargo.lock, which is committed.
 tauri = { version = "2.11.5", features = [] }
 # Required for #[derive(Serialize)] on the command's return type. Tauri depends
 # on serde already; declaring it here is what lets us use the derive macro.

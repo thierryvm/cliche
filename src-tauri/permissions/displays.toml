@@ -1,0 +1,9 @@
+# Application permission for the one command the main window calls.
+#
+# The reasoning for this whole directory - what it arms, and why nothing here is
+# named `default` - is written once, in `veil.toml`.
+
+[[permission]]
+identifier = "allow-describe-displays"
+description = "Lets the main window ask the backend to describe the monitors it can see. Reads geometry only: no pixel is captured by this command."
+commands.allow = ["describe_displays"]
