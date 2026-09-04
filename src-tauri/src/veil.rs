@@ -12,28 +12,65 @@
 //! milliseconds, once. Doing that inside the shortcut handler would put it
 //! inside the budget, and hiding it outside the budget would be worse - it
 //! would be a measurement of something the user never experiences. So the
-//! window exists, hidden, from the first second of the process, and the
-//! shortcut only shows it.
+//! window exists, hidden, from the first second of the process, and a capture
+//! only fills it and shows it.
 //!
-//! # The four steps, and what each one really covers
+//! Since 4 September 2026 the shortcut handler does not show it either: it hands
+//! the frame to the page and returns, and the window is shown by
+//! [`veil_decoded`] once the page says the image is ready to draw. The ORDER
+//! comment in [`perform_capture`] has the reasoning and the objection it routes
+//! around.
 //!
-//! | label | from | to |
-//! | --- | --- | --- |
-//! | `capture` | handler entry | the RGBA frame is in hand |
-//! | `transport` | there | the payload is built and staged |
-//! | `shown` | there | the veil window is visible and focused |
-//! | `painted` | there | the webview said it drew the image |
+//! # The five steps, and what each one really covers
+//!
+//! | label | from | to | window |
+//! | --- | --- | --- | --- |
+//! | `capture` | handler entry | the RGBA frame is in hand | hidden |
+//! | `transport` | there | the payload is built and staged | hidden |
+//! | `decoded` | there | `eval` -> fetch -> `decode()` -> acknowledgement | HIDDEN |
+//! | `shown` | there | `show()` and `set_focus()` have returned | becomes visible |
+//! | `painted` | there | one animation frame, acknowledged | visible |
 //!
 //! `transport` deliberately covers EVERYTHING between having the frame and
 //! having something the page can load - for transport B that includes the PNG
 //! encode and the base64. Splitting them would make the two transports
 //! incomparable, which is the only thing this measurement is for.
 //!
+//! # THE MEASUREMENT CONTRACT - both ends of the total are where they were
+//!
+//! The pipeline was reordered on 4 September 2026 (see the ORDER comment in
+//! [`perform_capture`]), and a reordering that also moved the goalposts would
+//! make every before/after comparison worthless. So the TOTAL still starts at
+//! the entry of the shortcut handler and still ends when the page has painted a
+//! VISIBLE window. Only the inside changed.
+//!
+//! ## The prediction, written down before the measurement, so it can be wrong
+//!
+//! Against the 18 clean runs of 4 September 2026 on 868ba0d - capture 23.4/25.4,
+//! transport 1.4/1.6, shown 0.0/0.2, painted 91.3/94.3, TOTAL 115.3/121.7
+//! (median/p95, ms) - this reordering predicts:
+//!
+//! - `decoded` lands near the OLD `painted` minus one animation frame: it covers
+//!   the same fetch and decode, without the rAF that used to precede the
+//!   acknowledgement.
+//! - `shown` stays near zero. It covers `show()` and `set_focus()`, exactly what
+//!   it covered before.
+//! - `painted` collapses to one animation frame plus one IPC round trip.
+//! - **The TOTAL RISES**, by roughly one extra IPC round trip: the page now
+//!   reports twice where it used to report once.
+//!
+//! **A TOTAL that falls sharply is a DEFECT, not a win.** It would mean a step
+//! stopped being counted - most likely a run being filed before it was really
+//! painted. The two ends of the total are fixed; nothing inside can make the
+//! whole trip shorter than it was.
+//!
 //! # `painted` is an approximation, and its two errors point OPPOSITE ways
 //!
 //! The page acknowledges from inside a `requestAnimationFrame` callback taken
-//! AFTER `HTMLImageElement.decode()` resolves, and Rust timestamps when the
-//! acknowledgement arrives. That number is:
+//! AFTER `HTMLImageElement.decode()` resolves - scheduled in the same turn as
+//! the `veil_decoded` call that asks Rust to show the window, so the frame it
+//! runs in is one of a window that is visible or about to be. Rust timestamps
+//! when the acknowledgement arrives. That number is:
 //!
 //! - **too large** by the return trip of the acknowledgement itself (webview ->
 //!   IPC -> command handler), and
@@ -50,8 +87,10 @@
 //! # Nothing here may panic
 //!
 //! Everything below runs either on the global-shortcut thread, on a webview IPC
-//! thread, or on the benchmark thread. A panic on any of them takes the
-//! application down, and losing the app to a diagnostic is a bad trade.
+//! thread, on the benchmark thread, or - since 4 September 2026 - on one of the
+//! short-lived fallback threads [`arm_show_fallback`] spawns. A panic on any of
+//! them takes the application down, and losing the app to a diagnostic is a bad
+//! trade.
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -93,6 +132,13 @@ pub const VEIL_ORIGIN: &str = "http://cliche.localhost";
 
 /// Timing label for building and staging the payload.
 pub const MARK_TRANSPORT: &str = "transport";
+
+/// Timing label for the page reporting the frame DECODED, window still hidden.
+///
+/// New on 4 September 2026, and the step the reordering exists for: it covers
+/// `eval` -> fetch -> `HTMLImageElement.decode()` -> the acknowledgement's trip,
+/// all of it behind a window nobody can see yet.
+pub const MARK_DECODED: &str = "decoded";
 
 /// Timing label for the window becoming visible.
 pub const MARK_SHOWN: &str = "shown";
@@ -192,6 +238,14 @@ pub struct Veil {
     /// re-serve a previous response for an identical URL, and a `painted` that
     /// measured a cache hit would be a fabricated 2 ms.
     generation: AtomicU64,
+    /// The highest run that has already been made VISIBLE, or zero.
+    ///
+    /// Since 4 September 2026 two paths reach `show()` - the page's
+    /// `veil_decoded` and [`arm_show_fallback`]'s timer - and they race by
+    /// design. This is what makes the second arrival a no-op. The rule is
+    /// [`may_show`], the atomic application of it is [`Veil::claim_show`], and
+    /// both are under test.
+    shown: AtomicU64,
     /// How many runs reached `painted`. The benchmark waits on this, and the
     /// report is printed every twenty.
     painted: AtomicUsize,
@@ -204,12 +258,57 @@ impl Veil {
             pending: Mutex::new(None),
             frame: Mutex::new(None),
             generation: AtomicU64::new(0),
+            shown: AtomicU64::new(0),
             painted: AtomicUsize::new(0),
         }
     }
 
     pub fn transport(&self) -> Transport {
         self.transport
+    }
+
+    /// Opens the next run number.
+    ///
+    /// Extracted from [`perform_capture`] so that the show claim below can be
+    /// raced in a test: a `Veil` is a plain value, an `AppHandle` is not.
+    /// `saturating_add` for the reason everything on this path saturates - a
+    /// debug overflow panic on the hotkey thread would end the application.
+    fn next_run(&self) -> u64 {
+        self.generation
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1)
+    }
+
+    /// Claims the right to make the veil visible for `run`.
+    ///
+    /// `true` for exactly ONE caller per run number, and never for a run the
+    /// pipeline has moved past. This is the whole of property D.
+    ///
+    /// `fetch_max` is the atomic half of the `run > already_shown` rule: it
+    /// hands back the PREVIOUS value, so of the two callers that race here -
+    /// the page's acknowledgement and the fallback timer - exactly one can
+    /// observe a value below `run`. `Relaxed` is enough because nothing else is
+    /// published through this location: the only thing being decided is which
+    /// caller proceeds, and a read-modify-write on one atomic is totally
+    /// ordered whatever the ordering asked for.
+    ///
+    /// **The staleness half is a plain load, so it is best effort, and saying
+    /// so matters.** A second shortcut press can bump `generation` between that
+    /// load and the `fetch_max`, in which case a run about to go stale shows the
+    /// veil a moment before the newer one shows it again. `Timings::begin_run`
+    /// already discards the run that press interrupted, so nothing is measured
+    /// twice. What this guard promises is one `show()` per RUN NUMBER, not one
+    /// `show()` per window.
+    fn claim_show(&self, run: u64) -> bool {
+        if !may_show(
+            self.generation.load(Ordering::Relaxed),
+            self.shown.load(Ordering::Relaxed),
+            run,
+        ) {
+            return false;
+        }
+
+        self.shown.fetch_max(run, Ordering::Relaxed) < run
     }
 
     /// Takes the lock, recovering a poisoned one. Same reasoning as
@@ -239,13 +338,63 @@ impl Veil {
     /// any process of the same session can read. Whatever ends a capture must
     /// come through here.
     ///
+    /// It ALSO burns the show claim of the run in flight, and that line arrived
+    /// on 4 September 2026 with the fallback timer. Escape at 200 ms leaves a
+    /// timer counting down to 250 ms; without this the veil the user just
+    /// dismissed would come back up over whatever they turned to - and empty,
+    /// since the frame has just been dropped two lines above. The page cannot
+    /// ordinarily receive Escape while the window is hidden, so this closes a
+    /// race rather than a bug that was observed; it costs one atomic on a path
+    /// that has already ended a capture.
+    ///
+    /// The claim burnt is the one of `run`, NOT of whatever `generation` reads
+    /// at that instant, and that distinction was a real defect until the review
+    /// of 4 September 2026 found it. Reading `generation` here meant a caller
+    /// closing run 1 could burn the claim of run 2: a second shortcut press
+    /// landing between a caller's `claim_show(1)` and its `release()` moved
+    /// `generation` to 2, and `fetch_max(2)` then made run 2 unshowable
+    /// FOR EVER - the "nothing happens" defect this whole reorder exists to
+    /// prevent. Narrow, microseconds wide, and the kind of thing that is
+    /// impossible to diagnose from the symptom.
+    ///
+    /// Callers that know the run they are closing pass it. `veil_dismissed` has
+    /// none of its own - the page does not send one - so it passes
+    /// [`Veil::current_run`], which is what "the capture on screen" means
+    /// there. Giving that command a run number is a separate improvement.
+    ///
     /// Split out of `veil_dismissed` so it can be tested: building an
     /// `AppHandle` needs an event loop a test binary has not, but a `Veil` is
     /// a plain value.
-    fn release(&self) {
+    fn release(&self, run: u64) {
         *self.pending() = None;
         *self.frame() = None;
+        self.shown.fetch_max(run, Ordering::Relaxed);
     }
+
+    /// The run the pipeline is on, for the one caller that has no run of its
+    /// own. See [`Veil::release`].
+    fn current_run(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
+    }
+}
+
+/// Whether a run may be made visible, given the run the pipeline is on and the
+/// highest run already shown.
+///
+/// Pure, and deliberately apart from the atomics that apply it, for the reason
+/// `ipc::is_from` is apart from `Webview`: a decision over three integers can be
+/// put to every row of its own table, and a decision that needs an event loop
+/// cannot be tested at all. Both halves of the rule earn their place:
+///
+/// - `run == current_run` - an acknowledgement belonging to a capture the user
+///   has already finished with must not raise the window back up.
+/// - `run > already_shown` - whichever of the two paths gets here first shows
+///   the veil; the second does nothing at all.
+///
+/// `run != 0` because zero is what the page holds when nothing is on screen,
+/// and what `generation` reads before the first capture.
+fn may_show(current_run: u64, already_shown: u64, run: u64) -> bool {
+    run != 0 && run == current_run && run > already_shown
 }
 
 /// Builds the veil window, HIDDEN, sized to the primary monitor.
@@ -298,6 +447,37 @@ pub fn create(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// How long after the page was handed the frame the veil is shown ANYWAY.
+///
+/// **This is not a tuning knob, it is the thing that keeps a missing
+/// acknowledgement from turning the shortcut into "nothing happens".** That
+/// defect was called blocking on 3 September 2026, and a missing acknowledgement
+/// is not hypothetical: in the 18-run session of 4 September 2026 on 868ba0d,
+/// runs 1 and 2 never acknowledged inside [`BENCH_RUN_TIMEOUT`]. Under the old
+/// order they still showed a veil, because `show()` came first; under this one
+/// they would show nothing at all.
+///
+/// A run rescued this way is ABANDONED, never measured: it is a run whose
+/// timings are unknown by definition, and letting it into a median would flatter
+/// the median with the very failure it is there to report.
+const SHOW_FALLBACK: Duration = Duration::from_millis(250);
+
+/// The `painted` p95 [`SHOW_FALLBACK`] is chosen against.
+///
+/// PROVENANCE, because a threshold without one is a taste: 94.3 ms is the
+/// `painted` p95 of the session Thierry ran on 4 September 2026 against commit
+/// 868ba0d - 18 clean runs, median 91.3 ms. Under that pipeline `painted`
+/// covered fetch + decode + one `requestAnimationFrame` + the acknowledgement's
+/// own trip, which is within one animation frame of what [`MARK_DECODED`] covers
+/// now.
+///
+/// Held against `SHOW_FALLBACK` by a test, which is the only place these two
+/// numbers ever meet - hence `cfg(test)`. It is a MEASUREMENT the threshold is
+/// justified by, not a value the application reads; compiled into the binary it
+/// would be dead weight, and `clippy -D warnings` would say so.
+#[cfg(test)]
+const DECODE_P95_MEASURED: Duration = Duration::from_micros(94_300);
+
 /// One capture, start to finish. THE function under measurement.
 ///
 /// Called by the global shortcut handler and by the benchmark, so that the two
@@ -337,10 +517,7 @@ pub fn perform_capture(app: &AppHandle) {
     };
     timings.mark(MARK_CAPTURE);
 
-    let run = veil
-        .generation
-        .fetch_add(1, Ordering::Relaxed)
-        .saturating_add(1);
+    let run = veil.next_run();
 
     let source = match veil.transport {
         Transport::CustomProtocolBmp => match capture::encode_bmp(&frame) {
@@ -374,45 +551,63 @@ pub fn perform_capture(app: &AppHandle) {
     };
     timings.mark(MARK_TRANSPORT);
 
-    // ORDER: show FIRST, hand the image over second.
+    // ORDER: hand the image over, and show NOTHING here.
     //
-    // The tempting order is the opposite - let the page start decoding while
-    // the window is still hidden, so the two costs overlap. It is not used,
-    // because WebView2 throttles (and may stop) `requestAnimationFrame` in a
-    // window that is not visible: the acknowledgement would arrive late, or
-    // not at all, for a reason that has nothing to do with the transport. A
-    // measurement that can silently stall is worse than a slightly serialised
-    // one. Revisiting this is 1e's business, once somebody has MEASURED what a
-    // hidden WebView2 actually does.
-    if let Err(error) = window.show() {
-        eprintln!("[cliche] veil: could not show the veil: {error}");
-        timings.abandon_run();
-        // The BMP was staged a few lines above and nobody will ever fetch it:
-        // the window this run was for never appeared. Releasing it here is the
-        // difference between an abandoned run and 8.29 MB of the user's screen
-        // living on until the next capture.
-        veil.release();
-        return;
-    }
-    // Focus, so that the Escape key reaches the veil's own document. An
-    // always-on-top window that Windows never activated receives no key events.
-    if let Err(error) = window.set_focus() {
-        eprintln!("[cliche] veil: could not focus the veil: {error}");
-    }
-    timings.mark(MARK_SHOWN);
-
+    // THIS IS THE REVERSE OF WHAT STOOD HERE UNTIL 4 SEPTEMBER 2026, and the
+    // comment it replaces argued against the change. That argument is preserved
+    // rather than deleted, because it is still sound: **WebView2 throttles (and
+    // may stop) `requestAnimationFrame` in a window that is not visible**, so an
+    // acknowledgement scheduled from a hidden page could arrive late, or never,
+    // for a reason having nothing to do with the transport. It set one
+    // condition for revisiting: that somebody MEASURE what a hidden WebView2
+    // actually does.
+    //
+    // THAT MEASUREMENT HAS STILL NOT BEEN TAKEN. Nobody has observed a hidden
+    // WebView2 on this machine, and this lot did not change that. What changed
+    // is that the objection no longer applies to the hidden stretch, because
+    // there is no `requestAnimationFrame` in it: the page answers with
+    // `veil_decoded` from the `HTMLImageElement.decode()` promise, which
+    // resolves on the image-decoding pipeline and is not a callback the
+    // compositor schedules. The rAF has moved AFTER the window is visible,
+    // where a throttle cannot reach it. The objection was routed around, not
+    // refuted.
+    //
+    // What the old order cost, measured: `show()` returned, the window became
+    // visible, and the page then spent the whole fetch-and-decode - median
+    // 91.3 ms, p95 94.3 ms over 18 clean runs on 868ba0d, 4 September 2026 -
+    // displaying whatever it held from the previous capture. That stretch is
+    // the flashing.
+    //
+    // The hypothesis this now rests on is written down so it can be falsified:
+    // IF a hidden WebView2 also stalls `decode()`, `veil_decoded` never
+    // arrives. `arm_show_fallback` below is what stops that from turning the
+    // shortcut into "nothing happens", and it is why that fallback is not
+    // optional.
+    //
     // `eval` is `ExecuteScriptAsync` on Windows: it returns before the script
     // has run, which is exactly right - the rest of the trip is the page's, and
-    // the page is what reports `painted`.
+    // the page is what reports `decoded`.
     if let Err(error) = window.eval(format!("window.__clicheShow(\"{source}\",{run})")) {
         eprintln!("[cliche] veil: could not hand the frame to the page: {error}");
         timings.abandon_run();
+        // Kept from the old order even though this function no longer shows
+        // anything: the window can still be up from a capture this press
+        // interrupted, and that capture is now dead too. Leaving it would show
+        // a stale frozen screen with no run behind it.
         let _ = window.hide();
-        // Same reason as the `show()` path: the page was never told the URL, so
-        // the staged payload has no reader and must not survive the run.
-        veil.release();
+        // The page was never told the URL, so the staged payload has no reader
+        // and must not survive the run - 8.29 MB of the user's screen, in a
+        // process that stays open for days.
+        veil.release(run);
         return;
     }
+
+    // Armed AFTER the `eval`, so the countdown starts when the page was handed
+    // its work. Nothing between here and the acknowledgement is marked, so the
+    // cost of spawning this thread inflates no step of the report - but it is
+    // not free, and it runs on the shortcut thread, so it is stated rather than
+    // implied.
+    arm_show_fallback(app, run);
 
     // The frame is kept so the selection can be cut out of it (`veil_selected`),
     // and it is kept HERE - after the page has been handed the image - on
@@ -432,14 +627,115 @@ pub fn perform_capture(app: &AppHandle) {
     //   here is the shortcut pressed twice without the veil being closed in
     //   between, which is the run `Timings::begin_run` already discards.
     //   It is still why this line sits after `eval` rather than next to the
-    //   encode where it would read more naturally: past the last mark this
-    //   pipeline takes, and off the stretch between the shortcut and the paint.
-    //   It runs on this thread, so it is not invisible; it is merely no longer
-    //   in front of the image.
+    //   encode where it would read more naturally: it is off the stretch
+    //   between the shortcut and the image reaching the page.
+    //
+    //   WHAT IT NO LONGER IS, since the reorder of 4 September 2026, and the
+    //   sentence that stood here said otherwise: this is not "past the last
+    //   mark". `decoded`, `shown` and `painted` are all taken AFTER it now, on
+    //   the webview's IPC thread. So in the double-press case this drop runs
+    //   CONCURRENTLY with the decode it is no longer in front of, and could in
+    //   principle contend for the allocator with the thread being measured.
+    //   That contention has NOT been measured, and it only exists on a run
+    //   `begin_run` has already discarded.
     // - Peak memory rises to three buffers for a moment on transport A - the
     //   previous frame, this frame, and its BMP copy - about 25 MB at
     //   1920 x 1080. Stated rather than discovered from a task manager.
     *veil.frame() = Some((run, frame));
+}
+
+/// Shows the veil [`SHOW_FALLBACK`] from now, unless the page got there first.
+///
+/// # Why this is not optional
+///
+/// Since the reordering, the ONLY thing that makes the veil appear on a healthy
+/// run is `veil_decoded` coming back from the page. An acknowledgement that
+/// never arrives therefore turns Ctrl+Shift+2 into "nothing happens" - the
+/// defect Thierry called blocking on 3 September 2026 - where the old order
+/// would at least have shown a window. And a missing acknowledgement is not a
+/// thought experiment: in the 18-run session of 4 September 2026 on 868ba0d,
+/// runs 1 and 2 never acknowledged within [`BENCH_RUN_TIMEOUT`].
+///
+/// # The run it rescues is thrown away, deliberately
+///
+/// `abandon_run`, never `finish_run`. A run shown by this path has no `decoded`
+/// and no `shown` mark, so its latency is unknown by construction; letting it
+/// into a median would flatter the median with the very failure the fallback
+/// exists to report. The terminal line is what a human reads instead, and the
+/// report's discarded-run count is where it shows up as a figure.
+///
+/// # What the user sees when it fires
+///
+/// A BLACK veil that fills in when the decode eventually finishes - never the
+/// previous capture. `__clicheShow` sets `frame.hidden = true` before it touches
+/// `src`, and that line matters more now than it ever did: it used to guard
+/// against a stale flash of one frame, and it is now what makes this fallback
+/// safe to fire at all.
+///
+/// # A thread, and what that costs
+///
+/// One thread per capture, alive for 250 ms. Not a timer plugin, because there
+/// is none in this dependency set and adding one for a sleep is not a trade
+/// worth making. The spawn happens after the last mark this function takes, so
+/// it inflates no step of the report; it is not free all the same, and it runs
+/// on the global-shortcut thread. Nothing in the closure may panic, for the
+/// reason the module header gives.
+fn arm_show_fallback(app: &AppHandle, run: u64) {
+    let app = app.clone();
+
+    std::thread::spawn(move || {
+        std::thread::sleep(SHOW_FALLBACK);
+
+        let Some(veil) = app.try_state::<Veil>() else {
+            return;
+        };
+
+        // The claim IS the race. If the page acknowledged - or if the capture
+        // was dismissed, which burns the claim through `Veil::release` - this
+        // returns false and the timer was simply never needed.
+        if !veil.claim_show(run) {
+            return;
+        }
+
+        let Some(window) = app.get_webview_window(VEIL_WINDOW_LABEL) else {
+            eprintln!(
+                "[cliche] veil: run {run} was not acknowledged and the veil window does not \
+                 exist; nothing can be shown"
+            );
+            if let Some(timings) = app.try_state::<Timings>() {
+                timings.abandon_run();
+            }
+            veil.release(run);
+            return;
+        };
+
+        if let Err(error) = window.show() {
+            eprintln!("[cliche] veil: fallback could not show the veil: {error}");
+            if let Some(timings) = app.try_state::<Timings>() {
+                timings.abandon_run();
+            }
+            veil.release(run);
+            return;
+        }
+        // Same reason as on the acknowledged path: without focus, Escape never
+        // reaches the veil - and a veil shown by the fallback is exactly the one
+        // a user is most likely to want to be rid of.
+        if let Err(error) = window.set_focus() {
+            eprintln!("[cliche] veil: fallback could not focus the veil: {error}");
+        }
+
+        if let Some(timings) = app.try_state::<Timings>() {
+            timings.abandon_run();
+        }
+
+        // Neither `decoded` nor `shown` is marked: this run is not a
+        // measurement, and half a pipeline filed under those labels would make
+        // the report worse, not better.
+        eprintln!(
+            "[cliche] veil: run {run} did NOT acknowledge its decode within {SHOW_FALLBACK:?}; \
+             the veil was shown by the FALLBACK and this run is NOT measured"
+        );
+    });
 }
 
 /// Prefix of a transport-B data URL. Its bytes, plus the base64 alphabet, are
@@ -589,6 +885,96 @@ fn response(status: u16, content_type: &str, body: Vec<u8>) -> tauri::http::Resp
             *fallback.status_mut() = tauri::http::StatusCode::INTERNAL_SERVER_ERROR;
             fallback
         })
+}
+
+/// The page's acknowledgement that the frozen frame is DECODED - and the call
+/// that makes the veil window visible.
+///
+/// This is the hinge of the reordering of 4 September 2026. Until then
+/// `perform_capture` showed the window and then handed the image over, so the
+/// window was visible for the whole decode - median 91.3 ms, p95 94.3 ms over
+/// 18 clean runs on 868ba0d - showing whatever the page held before. That
+/// stretch is the two flashes the veil was reported to have. Now the window is
+/// shown HERE, when there is something in it.
+///
+/// The three marks are laid out so the report still reads as a pipeline:
+/// `decoded` closes the hidden stretch, `shown` covers `show()` and
+/// `set_focus()` alone, and `painted` is the animation frame that follows on a
+/// window that is genuinely visible.
+///
+/// `set_focus` is not decoration. An always-on-top window Windows never
+/// activated receives no key events, so without it Escape would not reach the
+/// veil's own document and the only way out of a capture would be gone.
+///
+/// **Veil window only**, by capability AND in Rust, and this is the second most
+/// dangerous of the four to leave open. `main` runs React and its dependency
+/// tree; a `veil_decoded` from there would raise a full-screen, always-on-top,
+/// undecorated window over the user's desktop with no capture behind it. Same
+/// choice as `veil_painted` on the refusal - a printed line, because the veil's
+/// devtools cannot be opened (see [`ipc`]).
+#[tauri::command]
+pub fn veil_decoded(app: AppHandle, webview: Webview, run: u64) {
+    if let Err(refused) = ipc::ensure_from(webview.label(), VEIL_WINDOW_LABEL, "veil_decoded") {
+        eprintln!("[cliche] veil: {refused}");
+        return;
+    }
+
+    let Some(veil) = app.try_state::<Veil>() else {
+        eprintln!("[cliche] veil: no veil state is managed; run {run} cannot be shown");
+        return;
+    };
+
+    // CLAIMED FIRST, before a single mark is taken. Two things are refused here
+    // and both matter: a stale acknowledgement, which would raise a window over
+    // a capture the user has finished with, and the loser of the race against
+    // the fallback timer, which would file a `decoded` into a run the fallback
+    // has already abandoned.
+    if !veil.claim_show(run) {
+        return;
+    }
+
+    let Some(window) = app.get_webview_window(VEIL_WINDOW_LABEL) else {
+        eprintln!("[cliche] veil: the veil window does not exist; run {run} cannot be shown");
+        // Both of these were missing until the review of 4 September 2026, and
+        // the twin path in `arm_show_fallback` already did them: the claim was
+        // taken just above, so nothing else will ever end this run. Without the
+        // release, 8.29 MB of the user's screen lives on in a process that
+        // stays open for days; without the abandon, the run stays open in the
+        // instrument and the next `begin_run` reports it as interrupted.
+        if let Some(timings) = app.try_state::<Timings>() {
+            timings.abandon_run();
+        }
+        veil.release(run);
+        return;
+    };
+
+    // Bound once rather than looked up three times, and NOT with a `let Some
+    // ... else { return }`: showing the veil is what the user asked for, and an
+    // unmanaged instrument must cost the measurement, never the capture.
+    let timings = app.try_state::<Timings>();
+
+    if let Some(timings) = &timings {
+        timings.mark(MARK_DECODED);
+    }
+
+    if let Err(error) = window.show() {
+        eprintln!("[cliche] veil: could not show the veil: {error}");
+        if let Some(timings) = &timings {
+            timings.abandon_run();
+        }
+        // Same reasoning as the `eval` failure in `perform_capture`: the staged
+        // payload has no reader now, and 8.29 MB of the user's screen must not
+        // outlive the capture that took it.
+        veil.release(run);
+        return;
+    }
+    if let Err(error) = window.set_focus() {
+        eprintln!("[cliche] veil: could not focus the veil: {error}");
+    }
+
+    if let Some(timings) = &timings {
+        timings.mark(MARK_SHOWN);
+    }
 }
 
 /// The page's acknowledgement that the frozen image is on screen.
@@ -850,7 +1236,12 @@ pub fn veil_dismissed(app: AppHandle, webview: Webview) {
         // 8.29 MB held for a hidden window is a cost with no purpose. It also
         // means a selection arriving after Escape finds nothing and says so,
         // rather than cutting the screen the user just dismissed.
-        veil.release();
+        //
+        // `current_run` because this command carries no run number: the page
+        // sends none, so "the capture on screen" is the only thing Escape can
+        // mean here. Every OTHER caller of `release` names its own run - see
+        // the method for why that difference matters.
+        veil.release(veil.current_run());
     }
     if let Some(window) = app.get_webview_window(VEIL_WINDOW_LABEL) {
         if let Err(error) = window.hide() {
@@ -1144,13 +1535,30 @@ mod tests {
     }
 
     #[test]
-    fn the_four_labels_are_the_ones_the_report_has_to_show_in_order() {
+    fn the_five_labels_are_the_ones_the_report_has_to_show_in_order() {
         // The report lists steps in the order they were first marked, so these
-        // four names ARE the comparison between the two transports. A rename
+        // five names ARE the comparison between the two transports. A rename
         // would produce two reports that cannot be held side by side.
-        let pipeline = [MARK_CAPTURE, MARK_TRANSPORT, MARK_SHOWN, MARK_PAINTED];
+        //
+        // FIVE since 4 September 2026, and this is a change of pipeline rather
+        // than a relaxed assertion. `decoded` is a step that did not exist, and
+        // neither `shown` nor `painted` still covers what it used to: the window
+        // is now made visible BETWEEN them. A report printed before that day and
+        // one printed after are therefore NOT comparable step by step - only
+        // their TOTAL is, and keeping the two ends of that total where they were
+        // is the whole point of the contract in the module header.
+        let pipeline = [
+            MARK_CAPTURE,
+            MARK_TRANSPORT,
+            MARK_DECODED,
+            MARK_SHOWN,
+            MARK_PAINTED,
+        ];
 
-        assert_eq!(pipeline, ["capture", "transport", "shown", "painted"]);
+        assert_eq!(
+            pipeline,
+            ["capture", "transport", "decoded", "shown", "painted"]
+        );
 
         // `Timings::mark` drops a duplicate label and counts it as ignored, so
         // any collision would silently lose a step.
@@ -1160,6 +1568,142 @@ mod tests {
                 "`{label}` appears twice in the pipeline"
             );
         }
+    }
+
+    #[test]
+    fn the_fallback_outlasts_a_slow_decode_and_still_fires_before_the_bench_gives_up() {
+        // PROVENANCE OF THE FIGURE IT IS HELD AGAINST. `DECODE_P95_MEASURED` is
+        // the `painted` p95 of the session Thierry ran on 4 September 2026
+        // against commit 868ba0d: 18 clean runs, median 91.3 ms, p95 94.3 ms.
+        // Under THAT pipeline `painted` covered fetch + decode + one rAF + the
+        // acknowledgement's own trip, which is within one animation frame of
+        // what `decoded` covers now - so it is the best measurement available
+        // for how long a HEALTHY run may take before it starts to look dead.
+        //
+        // Twice it, and not once: 94.3 ms is a p95, not a maximum. A fallback
+        // firing on the tail of a healthy distribution would show the veil early
+        // AND call `abandon_run`, trading a rare flash for a pipeline that
+        // routinely refuses to be measured.
+        assert!(
+            SHOW_FALLBACK > DECODE_P95_MEASURED * 2,
+            "{SHOW_FALLBACK:?} is not more than twice the measured decode p95 \
+             ({DECODE_P95_MEASURED:?}): healthy runs would be shown by the fallback and \
+             then discarded, and the report would blame the pipeline"
+        );
+
+        // And under the benchmark's own patience, or the bench would abandon
+        // every unacknowledged run before the fallback ever repaired one - the
+        // report would show the discard and never the repair.
+        assert!(
+            SHOW_FALLBACK < BENCH_RUN_TIMEOUT,
+            "a fallback the benchmark outlives is a fallback the benchmark hides"
+        );
+    }
+
+    #[test]
+    fn the_show_rule_is_a_pure_decision_over_three_numbers() {
+        // Kept apart from the atomics for the reason `ipc::is_from` is kept
+        // apart from `Webview`: a rule that needs no event loop can be put to
+        // every row of its own table.
+        //                    current, already shown, the run asking
+        assert!(may_show(4, 3, 4), "the current run, not yet shown");
+        assert!(!may_show(4, 4, 4), "this run has already been shown");
+        assert!(!may_show(4, 5, 4), "a newer run is already on screen");
+        assert!(
+            !may_show(4, 3, 3),
+            "stale: run 3 acknowledged while run 4 is in flight"
+        );
+        assert!(!may_show(4, 3, 5), "a run that was never started");
+        assert!(
+            !may_show(0, 0, 0),
+            "before the first capture there is nothing to show"
+        );
+    }
+
+    #[test]
+    fn exactly_one_of_the_two_paths_may_show_a_run_and_a_stale_one_may_not() {
+        // PROPERTY D, the risk this change carries. Since 4 September 2026 TWO
+        // paths reach `show()` - the page's `veil_decoded` and the fallback
+        // timer - and they race by design. A `Veil` is a plain value, so the
+        // claim can be raced here with no window and no event loop.
+        let veil = Veil::new(Transport::CustomProtocolBmp);
+        let run = veil.next_run();
+
+        assert!(veil.claim_show(run), "the first arrival shows the veil");
+        assert!(
+            !veil.claim_show(run),
+            "the second arrival must do NOTHING: a second `show()` raises the window \
+             again over whatever the user has moved on to"
+        );
+
+        assert!(
+            !veil.claim_show(run + 1),
+            "no such run has been started; an acknowledgement naming it is not one"
+        );
+        assert!(
+            !veil.claim_show(0),
+            "0 is what the page holds when nothing is on screen"
+        );
+
+        // A stale acknowledgement, arriving after the next shortcut press.
+        let next = veil.next_run();
+        assert!(
+            !veil.claim_show(run),
+            "run {run} is over; its late acknowledgement must not wake the window"
+        );
+        assert!(veil.claim_show(next), "the run in flight is still showable");
+    }
+
+    #[test]
+    fn releasing_a_capture_stops_a_fallback_from_raising_the_veil_afterwards() {
+        // Escape at 200 ms; the fallback armed by `perform_capture` is still
+        // counting down. Without this line in `Veil::release`, the veil the user
+        // just dismissed comes back up 50 ms later, over whatever they turned
+        // to - and `veil_dismissed` has already dropped the frame, so it comes
+        // back EMPTY.
+        //
+        // The page cannot ordinarily receive Escape while the window is hidden,
+        // so this is a guard against a race rather than a repair of an observed
+        // bug. It costs one atomic on a path that ends a capture.
+        let veil = Veil::new(Transport::CustomProtocolBmp);
+        let run = veil.next_run();
+
+        veil.release(run);
+
+        assert!(
+            !veil.claim_show(run),
+            "a released capture must be showable by neither path"
+        );
+    }
+
+    #[test]
+    fn closing_one_run_never_burns_the_claim_of_the_run_that_replaced_it() {
+        // THE defect the review of 4 September 2026 found, and the reason
+        // `release` takes a run instead of reading `generation`.
+        //
+        // The sequence, and it is only microseconds wide: a caller claims the
+        // show for run 1, the user presses the shortcut again - `generation`
+        // becomes 2 - and only then does that caller fail and release. Reading
+        // `generation` at THAT moment burnt run 2's claim before run 2 had ever
+        // been shown, and neither its acknowledgement nor its fallback could
+        // raise the veil again. The user would press the shortcut and see
+        // nothing at all, for ever, which is precisely the failure the whole
+        // reorder exists to make impossible.
+        let veil = Veil::new(Transport::CustomProtocolBmp);
+
+        let first = veil.next_run();
+        assert!(veil.claim_show(first), "run 1 must be claimable");
+
+        let second = veil.next_run();
+
+        // The late caller of run 1 gives up, naming ITS OWN run.
+        veil.release(first);
+
+        assert!(
+            veil.claim_show(second),
+            "run {second} was never shown, and closing run {first} must not have taken its \
+             claim: the shortcut would do nothing from here on"
+        );
     }
 
     #[test]
@@ -1182,7 +1726,7 @@ mod tests {
         *veil.pending() = Some((1, vec![0xAB; 32]));
         *veil.frame() = None;
 
-        veil.release();
+        veil.release(1);
 
         assert!(
             veil.pending().is_none(),
