@@ -205,16 +205,23 @@ mod tests {
         // asking Rust to cut the frozen screen into the clipboard.
         //
         // `veil_decoded` joined the list on 4 September 2026 and is the second
-        // worst of the four to leave open: it is what makes the veil window
+        // worst of the five to leave open: it is what makes the veil window
         // VISIBLE. Called from `main` it would raise a full-screen, always-on-top
         // sheet over the user's desktop with no capture behind it - and, being
         // the only route to `show()` outside the fallback timer, with nothing
         // else to take it back down but Escape.
+        //
+        // `veil_ready` joined it later the same day and is the least dangerous
+        // of the five: it prints one line and touches nothing. It is guarded all
+        // the same, because that line is the whole evidence the cold-start
+        // diagnosis rests on, and evidence any window may write into the report
+        // is not evidence.
         for command in [
             "veil_painted",
             "veil_selected",
             "veil_dismissed",
             "veil_decoded",
+            "veil_ready",
         ] {
             let refusal = ensure_from(MAIN_WINDOW_LABEL, VEIL_WINDOW_LABEL, command)
                 .expect_err("a call from `main` to a veil command must be refused");
@@ -270,17 +277,21 @@ mod tests {
             "veil_selected",
             "veil_dismissed",
             "veil_decoded",
+            "veil_ready",
         ] {
             assert!(
                 granted(&mut context, command, VEIL_WINDOW_LABEL),
                 "`{command}` must be granted to `{VEIL_WINDOW_LABEL}`; without it the veil can \
-                 no longer end a capture and the application stops working"
+                 no longer end a capture and the application stops working - except for \
+                 `veil_ready`, which is a diagnostic: ungranted, it costs the cold-start \
+                 evidence and nothing else"
             );
             assert!(
                 !granted(&mut context, command, MAIN_WINDOW_LABEL),
                 "`{command}` must NOT be granted to `{MAIN_WINDOW_LABEL}`: that window runs \
-                 React and its dependency tree, and these are the calls that reach the clipboard \
-                 and that make a full-screen always-on-top window appear"
+                 React and its dependency tree, and these are the calls that reach the clipboard, \
+                 that make a full-screen always-on-top window appear, and - for `veil_ready` - \
+                 that write the lines a cold-start diagnosis is read from"
             );
         }
 

@@ -58,6 +58,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             displays::describe_displays,
+            veil::veil_ready,
             veil::veil_decoded,
             veil::veil_painted,
             veil::veil_selected,

@@ -249,6 +249,19 @@ pub struct Veil {
     /// How many runs reached `painted`. The benchmark waits on this, and the
     /// report is printed every twenty.
     painted: AtomicUsize,
+    /// When this state was built, so that a phase reported by the page can say
+    /// HOW LONG after the start it was reached. Read by [`veil_ready`] and by
+    /// nothing else; no step of the pipeline consults it.
+    ///
+    /// **This is a startup clock, NOT a process clock, and the difference is
+    /// the whole honesty of the figure.** `Veil::new` is called from `setup()`
+    /// (`lib.rs`), after the monitors have been listed and a few lines before
+    /// the veil window is built - so everything the process did before
+    /// `setup()` is missing from every elapsed printed here. The number is
+    /// therefore too SMALL by an amount nobody has measured. `Instant` and not
+    /// `SystemTime`, for the reason `timing.rs`'s header gives: a wall clock
+    /// jumps.
+    started: Instant,
 }
 
 impl Veil {
@@ -260,6 +273,7 @@ impl Veil {
             generation: AtomicU64::new(0),
             shown: AtomicU64::new(0),
             painted: AtomicUsize::new(0),
+            started: Instant::now(),
         }
     }
 
@@ -375,6 +389,13 @@ impl Veil {
     /// own. See [`Veil::release`].
     fn current_run(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
+    }
+
+    /// How long since this state was built. Read `started` for what that clock
+    /// does NOT include before treating the number as "since the process
+    /// started".
+    fn since_start(&self) -> Duration {
+        self.started.elapsed()
     }
 }
 
@@ -887,6 +908,130 @@ fn response(status: u16, content_type: &str, body: Vec<u8>) -> tauri::http::Resp
         })
 }
 
+/// The phases the veil page may report through [`veil_ready`], in the order it
+/// reaches them - and the ONLY strings this application will ever print for one.
+///
+/// - `loaded` - the module of `src/veil/main.ts` began executing.
+/// - `show-entered` - `window.__clicheShow` was entered, before it touches the
+///   image element.
+///
+/// A CLOSED list, and the reason is in `known_phase`.
+const READY_PHASES: [&str; 2] = ["loaded", "show-entered"];
+
+/// Matches a phase reported by the page against `READY_PHASES`.
+///
+/// Pure, and deliberately apart from the command that calls it, for the reason
+/// `ipc::is_from` is apart from `Webview`: a decision over a string can be put
+/// to every row of its own table, and a decision that needs an event loop
+/// cannot be tested at all.
+///
+/// **It hands back the entry of `READY_PHASES`, never its argument, and that is
+/// the point of the signature.** `phase` is a string the PAGE chooses, and the
+/// caller prints it on a terminal. Returning the caller's bytes would let a
+/// newline forge a second line - attributed, by whoever reads the report, to an
+/// event that never happened - or let an ANSI escape repaint what is already on
+/// the screen. Nothing that arrives over IPC is printed here; only a string
+/// written in this file is.
+///
+/// The comparison is exact: no trim, no case folding, no prefix. Same reasoning
+/// as `ipc::is_from`, and the same failure mode - a loose match is how a closed
+/// list quietly stops being closed.
+fn known_phase(reported: &str) -> Option<&'static str> {
+    READY_PHASES.into_iter().find(|known| *known == reported)
+}
+
+/// The line an unknown phase produces.
+///
+/// Pure, so its wording is under test. It takes the LENGTH of what arrived and
+/// not the text - see `known_phase` for why. The length is what separates a typo
+/// in this repository from something sent on purpose, and it is all a reader
+/// needs in order to act.
+fn refused_phase_line(reported_len: usize) -> String {
+    format!(
+        "[cliche] veil: a `veil_ready` phase of {reported_len} byte(s) is not one of \
+         {READY_PHASES:?}; REFUSED, and what arrived is NOT printed - the phase is a string the \
+         page chooses and this is a terminal"
+    )
+}
+
+/// The veil page reporting that its script reached a named phase.
+///
+/// # An instrument, and NOTHING else
+///
+/// Added on 4 September 2026 to explain ONE observation: the first capture after
+/// a launch does not acknowledge. On 868ba0d runs 1 and 2 of the benchmark never
+/// acknowledged within `BENCH_RUN_TIMEOUT`; on a134cb7, only run 1 - rescued by
+/// [`arm_show_fallback`] at 250 ms, which is a delay the user sees at every cold
+/// start.
+///
+/// It takes no mark, shows no window, claims no run and touches no state. The
+/// five steps of the report are exactly the five they were.
+///
+/// **What it costs, said here rather than discovered later.** Its `show-entered`
+/// call site is the first line of `window.__clicheShow`, which sits INSIDE the
+/// `decoded` step: one extra `invoke` - a serialisation and a post, not a round
+/// trip, since the page does not await it - lands on the measured path.
+///
+/// So the page fires it ONCE, guarded by a flag, and that guard is what makes
+/// this instrument safe to keep. The question it answers is about the FIRST
+/// capture after launch, and that run is discarded anyway - it is the one
+/// `arm_show_fallback` rescues. The cost therefore lands only where there is no
+/// measurement to spoil, and every run from the second onward travels the exact
+/// path a134cb7 measured. Without that guard, `decoded` on this branch would not
+/// have been step-for-step comparable with a134cb7, and the first thing this
+/// instrument would have perturbed is the figure it was added to explain.
+///
+/// # The three readings this exists to tell apart
+///
+/// | what the terminal shows | what it means |
+/// | --- | --- |
+/// | no `loaded` line at all before the first shortcut | **(a)** the script of `veil.html` does not run while the window has never been shown |
+/// | a `loaded` line at startup, but no `show-entered` line on run 1 | **(b)** the script runs, but `window.eval` does not reach a window that has never been shown |
+/// | both lines, and then no `run 1 painted` | **(c)** both work, and it is the FIRST `frame.decode()` that overruns |
+///
+/// Each line carries how long after the veil state was built it arrived, so the
+/// three cases are told apart by WHICH lines appear and read further by WHEN.
+/// `Veil::started` says what that clock does not include.
+///
+/// **The first row proves less than it looks, and the table would be misread
+/// without this.** A missing `loaded` line proves that no line ARRIVED. That is
+/// (a) - or it is outgoing IPC failing to leave a window that has never been
+/// shown, which would explain the missing `veil_decoded` just as well and is not
+/// one of the three. The two are separated by the run-1 `show-entered` line: if
+/// THAT one arrives while `loaded` never did, IPC out of a hidden window works,
+/// and it is the call at module load that was lost.
+///
+/// **Veil window only**, by capability AND in Rust, like the four commands
+/// below - even though this one can do nothing but print. A diagnostic left open
+/// to `main` would let React's dependency tree write lines into the report that
+/// this instrument's whole value depends on being trustworthy.
+#[tauri::command]
+pub fn veil_ready(app: AppHandle, webview: Webview, phase: String) {
+    if let Err(refused) = ipc::ensure_from(webview.label(), VEIL_WINDOW_LABEL, "veil_ready") {
+        eprintln!("[cliche] veil: {refused}");
+        return;
+    }
+
+    let Some(known) = known_phase(&phase) else {
+        eprintln!("{}", refused_phase_line(phase.len()));
+        return;
+    };
+
+    // `try_state`, never `state`: this runs on a webview IPC thread and a panic
+    // there ends the application. Without the state there is no clock, and the
+    // line is printed all the same - WHICH phases arrive is what separates (a)
+    // from (b); the elapsed only says how late.
+    match app.try_state::<Veil>() {
+        Some(veil) => println!(
+            "[cliche] veil: ready `{known}` {milliseconds:.1} ms after the veil state was built",
+            milliseconds = veil.since_start().as_secs_f64() * 1_000.0
+        ),
+        None => println!(
+            "[cliche] veil: ready `{known}` (no veil state is managed, so this line has no elapsed)"
+        ),
+    }
+}
+
 /// The page's acknowledgement that the frozen frame is DECODED - and the call
 /// that makes the veil window visible.
 ///
@@ -907,7 +1052,7 @@ fn response(status: u16, content_type: &str, body: Vec<u8>) -> tauri::http::Resp
 /// veil's own document and the only way out of a capture would be gone.
 ///
 /// **Veil window only**, by capability AND in Rust, and this is the second most
-/// dangerous of the four to leave open. `main` runs React and its dependency
+/// dangerous of the five to leave open. `main` runs React and its dependency
 /// tree; a `veil_decoded` from there would raise a full-screen, always-on-top,
 /// undecorated window over the user's desktop with no capture behind it. Same
 /// choice as `veil_painted` on the refusal - a printed line, because the veil's
@@ -1055,7 +1200,7 @@ pub fn veil_painted(app: AppHandle, webview: Webview, run: u64) {
 /// Returns `Result` so that a refusal reaches the page's `catch` instead of
 /// vanishing: a selection that was rejected must not look like one that
 /// succeeded.
-/// **Veil window only, and this is the most important of the four guards.**
+/// **Veil window only, and this is the most important of the five guards.**
 /// `main` runs React and its dependency tree, and one compromised package there
 /// could call this with a full-screen rectangle and put the frozen screen on the
 /// system clipboard without the user drawing anything at all. Two things refuse
@@ -1617,6 +1762,83 @@ mod tests {
         assert!(
             !may_show(0, 0, 0),
             "before the first capture there is nothing to show"
+        );
+    }
+
+    #[test]
+    fn a_ready_phase_is_matched_against_a_closed_list_and_nothing_else_gets_in() {
+        // The phase is a string the PAGE chooses, and it ends up on a terminal.
+        // That is a log injection waiting to happen: a newline forges a second
+        // line the reader will attribute to another event, and an ANSI escape
+        // repaints what is already on the screen. So the list is CLOSED and the
+        // match is exact - no trim, no case folding, no `starts_with` - for the
+        // same reason `ipc::is_from` compares window labels exactly.
+        for phase in READY_PHASES {
+            assert_eq!(known_phase(phase), Some(phase));
+        }
+
+        for impostor in [
+            "",
+            " ",
+            "unknown",
+            "Loaded",
+            "loaded ",
+            " loaded",
+            "show entered",
+            "loaded\nshow-entered",
+            "loaded\r\n[cliche] veil: ready `show-entered` at 0.0 ms since startup",
+            "\u{1b}[2Kloaded",
+            "loaded\u{1b}[31m",
+        ] {
+            assert_eq!(
+                known_phase(impostor),
+                None,
+                "`{}` is not one of {READY_PHASES:?} and must be refused",
+                impostor.escape_debug()
+            );
+        }
+    }
+
+    #[test]
+    fn a_known_phase_is_printed_from_this_crate_s_table_and_never_from_the_page() {
+        // The property that keeps the line safe the day the list grows: what
+        // comes back is the `&'static str` of `READY_PHASES`, not the bytes that
+        // arrived over IPC. A validator that returned its own argument would
+        // satisfy the test above and still print whatever the page sent.
+        let arrived = String::from("loaded");
+        let matched = known_phase(&arrived).expect("`loaded` is a known phase");
+
+        assert_eq!(matched, "loaded");
+        assert!(
+            !std::ptr::eq(matched.as_ptr(), arrived.as_ptr()),
+            "the phase printed must be this crate's own string, never the caller's bytes"
+        );
+    }
+
+    #[test]
+    fn a_refused_phase_is_reported_without_one_byte_of_what_arrived() {
+        // What a hostile phase would be FOR: forging a line that says the page
+        // reached a phase it never reached, in the very report this instrument
+        // exists to be read from.
+        let hostile = "loaded\n[cliche] veil: ready `show-entered` at 0.0 ms since startup";
+        let line = refused_phase_line(hostile.len());
+
+        assert!(
+            !line.contains(hostile),
+            "the refusal must not echo what arrived: {line}"
+        );
+        assert!(
+            !line.contains('\n') && !line.contains('\u{1b}'),
+            "one refusal is one line, and it carries no escape sequence: {line}"
+        );
+        assert!(
+            line.contains("REFUSED"),
+            "the line must say the phase was not recorded, not merely that it was odd: {line}"
+        );
+        assert!(
+            line.contains(&hostile.len().to_string()),
+            "the length is what tells a typo from an attempt, and it is all that may be \
+             reported: {line}"
         );
     }
 
