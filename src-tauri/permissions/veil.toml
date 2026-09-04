@@ -1,4 +1,4 @@
-# Application permissions for the three commands the veil window calls.
+# Application permissions for the four commands the veil window calls.
 #
 # WHY THIS DIRECTORY EXISTS AT ALL.
 # `tauri-build` inserts an application manifest under the `__app-acl__` key only
@@ -40,6 +40,11 @@
 # These files are read at the glob `permissions/**/*` and filtered by extension
 # (`tauri-build-2.6.3/src/acl.rs:299-329`, `tauri-utils-2.9.3/src/acl/build.rs:80-85`):
 # a `.md` note dropped in here would be ignored rather than reported.
+
+[[permission]]
+identifier = "allow-veil-decoded"
+description = "Lets the veil window report that the frozen frame has finished decoding. This is the call that MAKES THE VEIL WINDOW VISIBLE, so granting it to any other window would hand that window a full-screen, always-on-top, undecorated sheet over the user's desktop."
+commands.allow = ["veil_decoded"]
 
 [[permission]]
 identifier = "allow-veil-painted"

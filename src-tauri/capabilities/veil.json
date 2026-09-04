@@ -1,10 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "veil",
-  "description": "What the veil window may do while the screen is frozen: say that it painted, hand back the rectangle the user dragged, and cancel the capture. Nothing else. It is granted no `core:` permission on purpose - it had no capability at all before this file existed, so every core and plugin command was already refused to it (those carry a `plugin:` prefix and are gated whatever the application manifest says), and granting none here leaves the veil exactly as capable as it was. The three commands below stay guarded a second time in Rust by `ipc::ensure_from`. No `remote` block exists here either, and that absence is deliberate: it is what makes `!is_local` refuse any non-local origin outright.",
+  "description": "What the veil window may do while the screen is frozen: say that the frame has decoded - which is what makes this window visible at all since 4 September 2026 - say that it painted, hand back the rectangle the user dragged, and cancel the capture. Nothing else. It is granted no `core:` permission on purpose - it had no capability at all before this file existed, so every core and plugin command was already refused to it (those carry a `plugin:` prefix and are gated whatever the application manifest says), and granting none here leaves the veil exactly as capable as it was. The four commands below stay guarded a second time in Rust by `ipc::ensure_from`. No `remote` block exists here either, and that absence is deliberate: it is what makes `!is_local` refuse any non-local origin outright.",
   "local": true,
   "windows": ["veil"],
   "permissions": [
+    "allow-veil-decoded",
     "allow-veil-painted",
     "allow-veil-selected",
     "allow-veil-dismissed"

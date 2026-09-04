@@ -45,6 +45,19 @@
  * drag a corner past its opposite and `drawSelection` and Rust's
  * `CssRect::from_corners` both normalise, with no branch on either side.
  *
+ * ## The page sends TWO acknowledgements, and only one of them shows the veil
+ *
+ * Changed on 4 September 2026. `veil_decoded` goes out the moment
+ * `HTMLImageElement.decode()` resolves, and it is what tells Rust to make the
+ * window visible - until it arrives the veil is a hidden window that has already
+ * finished its work. `veil_painted` follows one animation frame later and closes
+ * the measured run.
+ *
+ * The reason for the split is that the window used to be shown FIRST, so it
+ * spent the whole decode - median 91.3 ms, p95 94.3 ms over 18 clean runs on
+ * 868ba0d, measured 4 September 2026 - displaying the previous capture. That is
+ * what was seen as flashing.
+ *
  * ## What `painted` really means
  *
  * The acknowledgement is sent from inside a `requestAnimationFrame` callback
@@ -122,7 +135,9 @@ import type { CursorName, Grab, Point, Rect } from './zones';
 declare global {
   interface Window {
     /**
-     * Called from Rust by `eval`, once the payload is ready.
+     * Called from Rust by `eval`, once the payload is ready, ON A WINDOW THAT
+     * IS STILL HIDDEN. It is this function's `veil_decoded` call that makes the
+     * window appear.
      *
      * @param source Either `http://cliche.localhost/frame/<n>.bmp` (transport A)
      *   or a `data:image/png;base64,...` URL (transport B). Both are built in
@@ -388,11 +403,15 @@ window.__clicheShow = (source: string, run: number): void => {
 
   currentRun = run;
 
-  // Hidden first, so that the veil is black rather than showing the PREVIOUS
-  // capture while the new one decodes. The window is made visible by Rust just
-  // before this function is called, so this runs before the compositor has had
-  // a chance to present anything stale - but "before" is a race, not a
-  // guarantee, and a stale flash of one frame remains possible.
+  // Hidden first, and this line now carries far more weight than it did.
+  //
+  // Since 4 September 2026 the window is still HIDDEN when this function runs;
+  // Rust shows it on `veil_decoded` below. So on the ordinary path this line
+  // guards nothing visible - but on the fallback path (`veil::arm_show_fallback`,
+  // 250 ms) the window is shown while this decode is still in flight, and this
+  // is what makes the user see a BLACK veil filling in rather than the previous
+  // capture. Deleting it would turn the fallback from a repair into a leak of
+  // the last screenshot.
   frame.hidden = true;
 
   frame.src = source;
@@ -404,7 +423,31 @@ window.__clicheShow = (source: string, run: number): void => {
         return;
       }
 
+      // Unhidden BEFORE Rust is told, so that the very first frame the
+      // compositor builds for the newly visible window already contains the
+      // image. The style write happens here; the window appears after a round
+      // trip; there is no ordering in which the window is visible and this
+      // element is not.
       frame.hidden = false;
+
+      // THE CALL THAT MAKES THE VEIL APPEAR. Rust holds the window hidden from
+      // the shortcut until this arrives - see the ORDER comment in
+      // `perform_capture` for the objection this design routes around.
+      //
+      // WHY THAT IS SAFE, and it is the property to keep in mind before moving
+      // anything below back above this line: the risky part of a hidden webview
+      // is `requestAnimationFrame`, which WebView2 throttles when the window is
+      // not visible. There is no rAF above this call. The one below runs on a
+      // window Rust has been asked to show - and if it is nonetheless throttled
+      // for the fraction of a second the show takes, the ONLY casualty is the
+      // `painted` measurement. The veil still appears. The danger was moved off
+      // the critical path and onto the instrument.
+      //
+      // No `await`: nothing here needs the reply, and waiting for one would add
+      // a round trip to the interval Rust is timing.
+      void invoke('veil_decoded', { run }).catch((error: unknown) => {
+        console.error('[cliche] veil: could not report the decode', error);
+      });
 
       requestAnimationFrame(() => {
         if (run !== currentRun) {
@@ -422,6 +465,10 @@ window.__clicheShow = (source: string, run: number): void => {
       // malformed BMP header. It must not be swallowed: the run would then
       // simply never acknowledge, and a broken transport would look like a slow
       // one.
+      //
+      // It is now also the case that never acknowledging means the veil never
+      // appears on its own. What the user gets instead is the fallback, 250 ms
+      // later, and a line in the terminal - not silence.
       console.error(`[cliche] veil: could not decode run ${run}`, error);
     });
 };

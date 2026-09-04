@@ -203,17 +203,31 @@ mod tests {
     fn the_veil_commands_refuse_the_main_window() {
         // THE case this module exists for: React, and its 150-plus packages,
         // asking Rust to cut the frozen screen into the clipboard.
-        let refusal = ensure_from(MAIN_WINDOW_LABEL, VEIL_WINDOW_LABEL, "veil_selected")
-            .expect_err("a call from `main` to a veil command must be refused");
+        //
+        // `veil_decoded` joined the list on 4 September 2026 and is the second
+        // worst of the four to leave open: it is what makes the veil window
+        // VISIBLE. Called from `main` it would raise a full-screen, always-on-top
+        // sheet over the user's desktop with no capture behind it - and, being
+        // the only route to `show()` outside the fallback timer, with nothing
+        // else to take it back down but Escape.
+        for command in [
+            "veil_painted",
+            "veil_selected",
+            "veil_dismissed",
+            "veil_decoded",
+        ] {
+            let refusal = ensure_from(MAIN_WINDOW_LABEL, VEIL_WINDOW_LABEL, command)
+                .expect_err("a call from `main` to a veil command must be refused");
 
-        assert!(refusal.contains("veil_selected"), "{refusal}");
-        assert!(refusal.contains("main"), "{refusal}");
-        assert!(refusal.contains("veil"), "{refusal}");
-        assert!(
-            refusal.contains("REFUSED"),
-            "the line must say the call did not happen, not merely that it was \
-             unusual: {refusal}"
-        );
+            assert!(refusal.contains(command), "{refusal}");
+            assert!(refusal.contains("main"), "{refusal}");
+            assert!(refusal.contains("veil"), "{refusal}");
+            assert!(
+                refusal.contains("REFUSED"),
+                "the line must say the call did not happen, not merely that it was \
+                 unusual: {refusal}"
+            );
+        }
     }
 
     #[test]
@@ -251,7 +265,12 @@ mod tests {
         // crate's own commands.
         let mut context = tauri::generate_context!();
 
-        for command in ["veil_painted", "veil_selected", "veil_dismissed"] {
+        for command in [
+            "veil_painted",
+            "veil_selected",
+            "veil_dismissed",
+            "veil_decoded",
+        ] {
             assert!(
                 granted(&mut context, command, VEIL_WINDOW_LABEL),
                 "`{command}` must be granted to `{VEIL_WINDOW_LABEL}`; without it the veil can \
@@ -260,7 +279,8 @@ mod tests {
             assert!(
                 !granted(&mut context, command, MAIN_WINDOW_LABEL),
                 "`{command}` must NOT be granted to `{MAIN_WINDOW_LABEL}`: that window runs \
-                 React and its dependency tree, and this is the call that reaches the clipboard"
+                 React and its dependency tree, and these are the calls that reach the clipboard \
+                 and that make a full-screen always-on-top window appear"
             );
         }
 
