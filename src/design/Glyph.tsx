@@ -51,4 +51,24 @@ export const ICON = {
   check: 'M5 13l4 4L19 7',
   alert: 'M12 8v5M12 17h.01M12 3l9 17H3l9-17Z',
   info: 'M12 11v6M12 7h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
+
+  /* The window controls, added 5 September 2026 with the custom title bar.
+     Deliberately the plainest possible geometry: a caption button is read by
+     muscle memory, and anything characterful there reads as the wrong button.
+     `restore` is two overlapping squares because that is what Windows draws
+     when a window is maximised — it is not decoration, it is the state. */
+  minimize: 'M5 12h14',
+  maximize: 'M5 5h14v14H5z',
+  restore: 'M9 4h11v11h-4M4 9h11v11H4z',
+  close: 'M6 6l12 12M18 6L6 18',
+
+  /* The three capture targets. These are not bullets in front of a title: the
+     three launcher actions differ ONLY by what they aim at, so the target is
+     the information the tile carries first. `capture` above already draws the
+     corner brackets of a zone. */
+  window: 'M4 5h16v14H4zM4 9.5h16',
+  screen: 'M3 5h18v11H3zM9 20h6M12 16v4',
+
+  /* Direction, not ornament: it points where the control goes. */
+  back: 'M14 6l-6 6 6 6',
 } as const;

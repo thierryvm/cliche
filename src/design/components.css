@@ -58,6 +58,69 @@
   /* The showcase page's own measure. Not a product screen: the app window is
      480–…, this is a document read on a desktop. */
   --c-page-max: 64rem;
+
+  /* ---- added 5 September 2026, with the V1 screens ------------------ */
+
+  /* The reflow threshold of the two secondary launcher tiles, and deliberately
+     the SAME VALUE as --c-thumb-min: both answer one question, "two columns at
+     the window's declared 480 px minimum, one column below it". Aliased rather
+     than retyped, so the 448 px budget moves in one place.
+     With the launcher's --space-4 gap the pair measures 2 x 212 + 16 = 440 —
+     eight pixels of slack inside 448. At 375 px the same pair would need 440 of
+     the 343 available, so the grid drops to one column BY ARITHMETIC, with no
+     @media rule. That is why this file still has none. */
+  --c-launch-min: var(--c-thumb-min);
+
+  /* 416 px. The confirmation never touches the gutters: 416 + 2 x 16 = 448, the
+     content budget at the narrowest window. A cap and not a width — without it
+     the same element at 1440 px stretches into a banner, and a banner does not
+     read as something that is about to leave. */
+  --c-toast-max: 26rem;
+
+  /* 224 px. The shortcut recorder swaps "Ctrl + Maj + 2" for "Appuyez sur une
+     combinaison…" IN PLACE. Without a floor the box grows under the pointer at
+     the instant it is armed, which is a miss waiting to happen on the control
+     whose whole job is to receive the next keystroke. */
+  --c-recorder-min: 14rem;
+
+  /* 160 px. The floor of the HELP's action column, added 5 September 2026 to
+     repair a defect this file wrote itself.
+
+     WHAT WENT WRONG. `.c-keymap` was `auto minmax(0, 1fr)`, and `minmax(0, …)`
+     says out loud that the track MAY measure zero. It did. At a 375 px page the
+     `dd` of every row came out 0 px wide and its text was painted OUTSIDE the
+     panel, while the `auto` keys track took its full max-content — and that one
+     track was the whole of the page's horizontal overflow, measured at 437 px
+     for a 375 px window.
+
+     THE FLOOR IS ALSO WHAT MAKES THE KEYS FOLD. Given a floor, the `auto` track
+     can no longer claim max-content, so the flex-wrap of `.c-keys` finally
+     fires — the behaviour that block's own comment already described as a fact.
+     It was a description of an intention; this constant is what makes it true.
+
+     WHY NOT LARGER. The binding case is the 375 px robustness width: the panel
+     measures 343 px, its --space-4 padding leaves 311, and the --space-4 column
+     gap leaves 295 for the two tracks. The keys track's min-content is ONE
+     keycap, and the widest in the product is « Windows », MEASURED at 71 px.
+     A floor above 295 - 71 = 224 px would push that keycap back out of the
+     panel — the same failure, moved one column to the left. 160 leaves the keys
+     135 px, room for the widest cap and its « + » with slack.
+
+     A COMPONENT CONSTANT and not a token: no file outside src/design/ has to
+     agree on this number, which is the exact test --titlebar-height's own
+     comment applies in the other direction. */
+  --c-keymap-action-min: 10rem;
+
+  /* SHOWCASE SCAFFOLDING ONLY — the two widths the V1 screens are judged at.
+     30rem = 480 px is `minWidth` in src-tauri/tauri.conf.json, MIRRORED here
+     and not derived: nothing tests that the two agree. That is the same fact
+     class scripts/check-version.mjs exists for, and it is stated rather than
+     hidden. 23.4375rem = 375 px is the robustness width, and it is NOT
+     reachable in the product today — the window cannot go under 480.
+     Both frames cap with min(100%, …), so neither can push this page into a
+     horizontal scroll at 375 px. */
+  --c-frame-app: 30rem;
+  --c-frame-narrow: 23.4375rem;
 }
 
 /* ==================================================================== *
@@ -74,7 +137,9 @@
 .c-row:focus-visible,
 .c-row.is-focus,
 .c-tile:focus-visible,
-.c-tile.is-focus {
+.c-tile.is-focus,
+.c-launch__item:focus-visible,
+.c-launch__item.is-focus {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
 }
@@ -312,19 +377,33 @@
  * prefers-reduced-transparency block here, and none is missing.
  * ==================================================================== */
 
+/* THE MATERIAL ITSELF — one recipe, and since 5 September 2026 two geometries:
+   the floating lens (.c-glass) and the strip that caps the window
+   (.c-titlebar). Written once and shared, because a glass recipe copied to a
+   second selector is a glass that drifts at the first correction — the same
+   reason Glyph.tsx exists for icon paths.
+   RULE inherited from tokens.css and still true with two users: at most 3 glass
+   surfaces per screen. A V1 screen spends 1 (the title bar); the editor will
+   spend a 2nd (the floating toolbar over a capture). */
+.c-glass,
+.c-titlebar {
+  background-color: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  color: var(--text);
+}
+
+/* The floating lens: it hovers over a capture, so it has a thick edge all
+   round, the deepest shadow in the system, and it lifts off the plane. */
 .c-glass {
   position: relative;
   padding: var(--space-4);
   border: var(--c-border-width) solid var(--glass-border);
   border-radius: var(--radius-lg);
-  background-color: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   /* --elev-3 outside, the lit top edge inside. One pixel, not a shader. */
   box-shadow:
     var(--elev-3),
     inset 0 var(--c-border-width) 0 var(--glass-sheen);
-  color: var(--text);
   z-index: var(--layer-floating);
 }
 
@@ -598,6 +677,600 @@
 }
 
 /* ==================================================================== *
+ * WINDOW SHELL — added 5 September 2026.
+ *
+ * WHY THE BODY SCROLLS UNDER THE BAR, AND NOT BESIDE IT
+ *   The title bar is glass. Glass on a still backdrop is indistinguishable
+ *   from a flat fill: it costs a composited layer and buys nothing. So the
+ *   scroller runs the FULL height of the shell and the bar is laid over it —
+ *   the page slides underneath, which is the only thing that makes this
+ *   material earn its place here.
+ *
+ * NO BACKGROUND ON .c-shell, ON PURPOSE
+ *   tokens.css: "while window-vibrancy is in play the document body stays
+ *   transparent". A backdrop here would hide Mica exactly like one on <body>.
+ *   The showcase's .c-frame paints --bg-window instead, because a browser tab
+ *   is precisely the "no Mica behind us" case that token names.
+ * ==================================================================== */
+
+/* The name of the screen you are on — « Capturer », « Réglages », « Aide ».
+   THIS is where --size-title is spent, once per window: the title bar carries
+   the application name at --size-caption because a window title is read on the
+   first day and never again, while this line answers "where am I".
+   One rule, two users: the showcase's own h1 is the same decision, and a second
+   copy of these four declarations is a second decision waiting to drift.
+   The three resets are not padding: src/styles.css styles the bare `h2`
+   element (uppercase, tracked, muted) for the section label, and an element
+   selector loses on font-size while KEEPING text-transform. That is the
+   specificity trap this file's siblings .c-glass__title and .c-empty__title
+   already carry the same three lines for. */
+.c-screen__name,
+.c-showcase__title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--size-title);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  letter-spacing: normal;
+  text-transform: none;
+  opacity: 1;
+}
+
+.c-shell {
+  position: relative;
+  /* The fallback is the product: a window is as tall as its viewport, in dvh
+     and not vh. The variable exists so the showcase can put the same shell in
+     a 26rem frame WITHOUT a second class and without an @media rule. */
+  block-size: var(--c-shell-height, 100dvh);
+  overflow: hidden;
+}
+
+.c-shell__body {
+  block-size: 100%;
+  overflow-y: auto;
+  /* A drawer or a sheet must not scroll the window behind it. */
+  overscroll-behavior: contain;
+  padding: var(--gutter);
+  /* The bar is laid OVER this scroller, so the first line of content has to
+     clear it. --space-5 on top of that: the screen name is a new block, not a
+     line stuck under the chrome. */
+  padding-block-start: calc(var(--titlebar-height) + var(--space-5));
+  /* env() is 0 on every Windows desktop, so this costs nothing today and is
+     not a fix for anything observed. It is the form a fixed bottom edge takes
+     in this system, kept so the first WebView with an inset does not need a
+     second decision. */
+  padding-block-end: max(var(--space-5), env(safe-area-inset-bottom));
+}
+
+/* ==================================================================== *
+ * TITLE BAR — the window's own chrome, drawn by us.
+ *
+ * NO BORDER RADIUS. Windows rounds a top-level window itself; a radius here
+ * would put our corner inside theirs and show a sliver of what is behind.
+ * NOT VERIFIED on an undecorated window — see the report.
+ *
+ * WHAT MAY BE PAINTED ON THIS GLASS, and it is a short list:
+ *   --text        the window controls' glyphs        measured on glass
+ *   --text-muted  the application name               measured on glass, and
+ *                 it is the pair that binds --glass-alpha at 0.80
+ * Nothing else. --text-inert is forbidden here by a token RULE, and every
+ * semantic (--danger, --success, --warning) is measured AS TEXT on the five
+ * opaque surfaces and on none of the glass modes. Hence: no message, no chip
+ * and no field ever sits in this bar. A fill is different — an opaque fill
+ * REPLACES the glass in its own rectangle, so the pair under it is the one
+ * scripts/check-contrast.mjs already measures.
+ * ==================================================================== */
+
+.c-titlebar {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  z-index: var(--layer-floating);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: var(--titlebar-height);
+  padding-inline-start: var(--space-4);
+  /* THE TRAILING EDGE PAYS THE FOCUS RING, exactly like the two horizontal
+     edges do through --titlebar-height. .c-shell clips at `overflow: hidden`,
+     and the last window control sat flush against that clip: measured 0 px of
+     clearance on 5 September 2026, so the ring of « Fermer » lost its trailing
+     segment while the same ring on the same button had 4 px above and below it.
+     --focus-ring-space and never --space-1: the two happen to measure 4 px
+     today, and only one of them follows the ring the day it changes. */
+  padding-inline-end: var(--focus-ring-space);
+  border-block-end: var(--c-border-width) solid var(--glass-border);
+  /* --elev-2 and not --elev-3: this bar caps a page, it does not float over a
+     capture. --elev-3 is the lens's, and it is the deepest in the system. */
+  box-shadow:
+    var(--elev-2),
+    inset 0 var(--c-border-width) 0 var(--glass-sheen);
+  /* You cannot select the text of a title bar; letting a drag start a text
+     selection is also how a window drag dies halfway. */
+  user-select: none;
+  -webkit-user-select: none;
+  /* TWO SPELLINGS, AND NEITHER IS VERIFIED HERE. `-webkit-app-region` is the
+     Chromium/Electron property; whether WebView2 honours it is unknown on this
+     machine. Tauri's own answer is the `data-tauri-drag-region` ATTRIBUTE in
+     the markup, which also gives double-click-to-maximise. Both are declared
+     because an unsupported property is inert, and the attribute costs nothing.
+     Which one actually moves the window is a measurement for the lot that
+     turns off `decorations`. */
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.c-titlebar__title {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-family: var(--font-text);
+  /* --size-caption, not --size-title. A window title is chrome: it is read
+     once, on the first day, and never again. --size-title stays spent ONCE per
+     window, on the name of the screen you are actually on — which is the line
+     that tells you where you are. */
+  font-size: var(--size-caption);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-tight);
+}
+
+.c-titlebar__controls {
+  flex: none;
+  display: flex;
+  align-items: center;
+  /* The controls are the hole in the drag region. Without this the buttons
+     move the window instead of pressing. */
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* A window control is `c-btn c-btn--ghost c-btn--icon c-winbtn`: it takes
+   --hit-min, the shared focus ring and the ghost geometry from the button, and
+   changes only which fill answers the pointer.
+   THE SPECIFICITY IS MATCHED ON PURPOSE. `.c-btn--ghost:hover` is (0,3,0);
+   `.c-winbtn:hover` alone would be (0,2,0) and would LOSE, silently, in the one
+   place where the difference is invisible in the stylesheet. Both classes are
+   named so the two rules tie, and this file comes later. */
+.c-winbtn {
+  border-radius: var(--radius-sm);
+}
+
+/* --surface-selected and not --surface-raised, and this is the whole reason
+   the rule exists: what passes behind this bar is our own page, which is
+   near-white in the light theme. Composited through the glass, --surface-raised
+   (#fffdfa) is indistinguishable from it — the hover would simply not appear.
+   --surface-selected reads against the composite in both themes, and --text on
+   it is already measured on both. */
+.c-btn--ghost.c-winbtn:hover,
+.c-btn--ghost.c-winbtn.is-hover {
+  background-color: var(--surface-selected);
+  box-shadow: var(--elev-0);
+}
+
+/* Pressed: the fill is already spent, and a button may not cast --elev-2, so
+   the only channel left is a shape. A hairline ring in currentColor — which is
+   whatever the fill under it already makes legible, so the pressed state can
+   never invent an unmeasured pair. */
+.c-btn--ghost.c-winbtn:active,
+.c-btn--ghost.c-winbtn.is-active {
+  background-color: var(--surface-selected);
+  box-shadow: inset 0 0 0 var(--c-border-width) currentColor;
+}
+
+/* Close wears --danger under the pointer, like every window on this platform,
+   and like .c-btn--danger already does in this system: outlined or quiet at
+   rest, filled when it is aimed at. The fill is opaque, so the pair measured is
+   --text-on-solid on --danger, which check-contrast.mjs already gates.
+   NOTE WHAT THIS LOOKS LIKE IN DARK: --danger there is a pale salmon with
+   near-black text, not the white-on-red of Windows. That is the system
+   inverting its fills so --text-on-solid stays readable, not an accident. */
+.c-btn--ghost.c-winbtn--close:hover,
+.c-btn--ghost.c-winbtn--close.is-hover {
+  background-color: var(--danger);
+  color: var(--text-on-solid);
+  box-shadow: var(--elev-0);
+}
+
+.c-btn--ghost.c-winbtn--close:active,
+.c-btn--ghost.c-winbtn--close.is-active {
+  background-color: var(--danger);
+  color: var(--text-on-solid);
+  box-shadow: inset 0 0 0 var(--c-border-width) currentColor;
+}
+
+/* ==================================================================== *
+ * LAUNCHER — the home screen IS this block.
+ *
+ * THE GRID IS UNEQUAL BECAUSE THE CONTENT IS. One of the three actions works
+ * today; two do not. Three tiles of the same width would say the opposite, and
+ * that is the single most recognisable shape of a screen nobody decided.
+ * The built action spans the row; the two that are not built share the one
+ * below and say so.
+ * ==================================================================== */
+
+.c-launch {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--c-launch-min), 1fr));
+  gap: var(--space-4);
+}
+
+.c-launch__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  inline-size: 100%;
+  min-block-size: var(--hit-min);
+  padding: var(--space-4);
+  border: var(--c-border-width) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background-color: var(--surface);
+  box-shadow: var(--elev-1);
+  color: var(--text);
+  font-family: var(--font-text);
+  text-align: start;
+  cursor: pointer;
+  /* No 300 ms tap delay on a touch laptop, on a control driven under time
+     pressure. */
+  touch-action: manipulation;
+  transition:
+    background-color var(--dur-instant) var(--ease-standard),
+    border-color var(--dur-instant) var(--ease-standard),
+    box-shadow var(--dur-instant) var(--ease-standard);
+}
+
+.c-launch__item:hover,
+.c-launch__item.is-hover {
+  background-color: var(--surface-raised);
+}
+
+/* The one accent on the home screen. The product does ONE thing today and the
+   screen should look like it; the shortcut reminder, the two unbuilt tiles and
+   the whole title bar carry no accent at all, which is what keeps this one
+   rare. */
+.c-launch__item--primary {
+  grid-column: 1 / -1;
+  border-color: transparent;
+  background-color: var(--accent);
+  color: var(--text-on-solid);
+}
+
+.c-launch__item--primary:hover,
+.c-launch__item--primary.is-hover {
+  background-color: var(--accent-hover);
+}
+
+.c-launch__item--primary:active,
+.c-launch__item--primary.is-active {
+  background-color: var(--accent-active);
+  box-shadow: var(--elev-0);
+}
+
+/* NOT BUILT YET — and deliberately NOT the generic disabled skin.
+   `.c-btn:disabled` paints its label --text-inert, which WCAG 1.4.3 exempts
+   because nobody needs to read a control they cannot use. Here the opposite is
+   true: the label is the ONLY thing these two tiles are for. So the text stays
+   --text-muted, measured at 4.5:1 on --surface-inert, and the "not here" is
+   carried by four non-colour cues instead — a dashed boundary, the inert fill,
+   the "à venir" badge, and aria-disabled. PRD A4 is answered four times over.
+   The click is stopped in the handler: aria-disabled announces, it does not
+   block, and keeping the tile focusable is how a keyboard user learns the two
+   actions exist at all (PRD A1). */
+.c-launch__item--soon {
+  border-style: dashed;
+  background-color: var(--surface-inert);
+  box-shadow: var(--elev-0);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* No hover response is itself a cue, and it has to be written or the generic
+   rule above would give one. */
+.c-launch__item--soon:hover,
+.c-launch__item--soon.is-hover {
+  background-color: var(--surface-inert);
+}
+
+.c-launch__name {
+  font-family: var(--font-display);
+  font-size: var(--size-section);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+/* Bigger than the toolbar glyph, and above the name rather than in front of
+   it: the three actions differ ONLY by their target, so the target is the
+   first information the tile carries. An icon in front of a title would be
+   decoration; this one is the subject. */
+.c-launch__item .c-btn__glyph {
+  width: var(--space-6);
+  height: var(--space-6);
+}
+
+/* ==================================================================== *
+ * KEYCAP, BADGE, INLINE NUMBER — three small pieces of vocabulary the V1
+ * screens need in more than one place.
+ * ==================================================================== */
+
+/* A COMBINATION is a group of keys, not a string. Written this way for a
+   reason found at 375 px: "Ctrl + Maj + Alt + Windows + F12" as one nowrap
+   keycap measures about 257 px, which crushes the action column of the help
+   beside it down to one word per line. As separate chips in a wrapping row,
+   the group's min-content is the widest single key — MEASURED at 71 px for
+   "Windows", 5 September 2026 — and the layout degrades by folding instead of
+   by crushing, with no @media rule.
+   IT TAKES TWO RULES TO BE TRUE, and this one is only the first. A wrapping row
+   folds only when something REFUSES it the room to stay on one line; until
+   5 September 2026 nothing did, .c-keymap's action track collapsed to zero
+   instead, and this paragraph described a behaviour the page did not have. The
+   second half is --c-keymap-action-min. Remove that floor and this comment goes
+   back to being a wish. */
+.c-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-family: var(--font-numeric);
+  font-size: var(--size-caption);
+  line-height: var(--leading-numeric);
+}
+
+/* ONE key, wherever it is shown: the launcher's reminder, the settings
+   recorder, every row of the help. ONE class, because a second keycap style is
+   how two of them stop agreeing.
+   NOT subject to --hit-min: it is a piece of text, never a control. When it
+   has to be pressable, it goes inside a .c-btn that carries the 44 px. */
+.c-kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  /* --border-strong and not --border: a keycap is read as an object with an
+     edge, and --border measures 1.33:1. That the ratio is not required here
+     does not make an invisible edge useful. */
+  border: var(--c-border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-raised);
+  color: var(--text);
+  font-family: var(--font-numeric);
+  font-size: var(--size-caption);
+  line-height: var(--leading-numeric);
+  white-space: nowrap;
+}
+
+/* Reading the registered combination is an IPC round trip. The keycap holds
+   its own box while it waits — same class, painted out. */
+.c-kbd.c-skeleton {
+  border-color: transparent;
+  color: transparent;
+}
+
+/* "à venir" — a fact about the roadmap, not a warning. It wears the quietest
+   measured pair in the system: --text-muted on the surface it sits on, inside
+   a --border-strong outline. Deliberately NOT --accent (which would mean "you
+   can do this") and NOT --warning (nothing is being destroyed).
+   --radius-pill gets a second employment here; its token comment said it had
+   no user left in the product since the veil grips were removed. */
+.c-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: var(--space-1) var(--space-2);
+  border: var(--c-border-width) solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-family: var(--font-text);
+  font-size: var(--size-caption);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+}
+
+/* A measurement inside a sentence. The product's vocabulary is numeric and
+   "933×577" is a value, not prose — but it must not change colour, because the
+   line it sits in already carries one. */
+.c-num {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The line under the launcher: what the shortcut does, with the keycap in it.
+   It is NOT inside the primary tile, and that is the point — the shortcut
+   fires when this window is not even focused, so it belongs to the
+   application, not to a button. */
+.c-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-family: var(--font-text);
+  font-size: var(--size-caption);
+  line-height: var(--leading-normal);
+}
+
+/* ==================================================================== *
+ * TRANSIENT CONFIRMATION — "933×577 copié", and the failure that today is
+ * only visible in a terminal.
+ *
+ * IT IS A .c-note, plus position, plus a lifetime. The markup is
+ * `c-note c-note--success c-toast`: every colour, glyph rule and gap comes
+ * from the note that already exists and is already measured. This block adds
+ * four things and no colour — where it sits, how wide it may get, that it is
+ * raised, and when it leaves.
+ *
+ * NOT GLASS, and the reason is a measurement and not a taste: a toast carries
+ * --success or --danger AS TEXT, and those are measured on the five opaque
+ * surfaces and on NONE of the three glass modes. Putting them on glass would
+ * be an unmeasured pair, in the one component whose entire job is to be read
+ * in under three seconds.
+ *
+ * --layer-tooltip, borrowing its token's own reasoning: "above dialogs —
+ * otherwise useless inside one". A confirmation that a dialog can hide is a
+ * confirmation you cannot trust.
+ * ==================================================================== */
+
+.c-toast-region {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: var(--layer-tooltip);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--gutter);
+  padding-block-end: max(var(--space-5), env(safe-area-inset-bottom));
+  /* The region covers the foot of the window; only the toast itself may be
+     clicked, or an invisible strip would swallow the content under it. */
+  pointer-events: none;
+}
+
+.c-toast {
+  inline-size: 100%;
+  max-inline-size: var(--c-toast-max);
+  background-color: var(--surface-raised);
+  box-shadow: var(--elev-2);
+  pointer-events: auto;
+  animation: c-toast-in var(--dur-short) var(--ease-out);
+}
+
+/* Grows, so the dismiss control is pushed to the far edge and lands in the
+   same place whatever the message says; shrinks to zero, so a long failure
+   wraps instead of pushing that control out of the box. An error is never
+   truncated here — an ellipsis on the sentence that names what failed is the
+   same as not having written it. */
+.c-toast__message {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+/* The success confirmation, and it alone. Two animations in one declaration:
+   the entrance, then the exit after --dur-toast-dwell. The lifetime lives HERE
+   rather than in a setTimeout so that the number stays in the token layer with
+   the reason it was chosen; the component only has to drop the node on
+   animationend.
+   Under prefers-reduced-motion --dur-short is 0s and both animations snap,
+   while the dwell — declared outside that media query on purpose — still
+   holds the message on screen for its 2.4 s. */
+.c-toast--transient {
+  animation:
+    c-toast-in var(--dur-short) var(--ease-out),
+    c-toast-out var(--dur-short) var(--ease-in) var(--dur-toast-dwell) forwards;
+}
+
+/* A failure has NO transient variant, and that is the decision: a message
+   nobody managed to read names nothing, which is exactly what PRD R2 forbids.
+   It leaves when it is dismissed — hence a real 44 px control. */
+.c-toast__dismiss {
+  flex: none;
+  /* Pull the button back into the padding it does not need: a 44 px target
+     inside a --space-3 box would otherwise set the height of the whole toast. */
+  margin-block: calc(-1 * var(--space-2));
+  margin-inline-end: calc(-1 * var(--space-1));
+}
+
+@keyframes c-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-3));
+  }
+}
+
+@keyframes c-toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(var(--space-3));
+    /* Not just invisible: gone. If the component is slow to unmount, an
+       opacity-0 toast would still be catching clicks over the content. */
+    visibility: hidden;
+  }
+}
+
+/* ==================================================================== *
+ * SHORTCUT RECORDER — the settings control that listens for the next
+ * combination.
+ *
+ * IT IS A BUTTON, and its "listening" state is `aria-pressed="true"`, which
+ * this file already dresses: --surface-selected plus the inset accent bar, and
+ * the accent's second employment is precisely "active state". Nothing new was
+ * needed for the state that matters most.
+ * ==================================================================== */
+
+.c-recorder {
+  min-inline-size: var(--c-recorder-min);
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* The red edge is the THIRD cue and never the first: the named message under
+   the control does the work, exactly as .c-input[aria-invalid] and its
+   .c-field__message do. Scoped to the recorder rather than to .c-btn — a
+   button is not generally a thing that can hold an invalid value. */
+.c-recorder[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+/* ==================================================================== *
+ * KEY MAP — the help, and it is a REFERENCE, not a list of things to click.
+ *
+ * A <dl>, and the combination is the <dt>: the term you look up is the key you
+ * pressed, the action is its description. That is also what puts the two
+ * columns next to each other — a 1fr name column with the keys pushed to the
+ * far right is unreadable the moment the window is wide.
+ *
+ * Deliberately NOT built from .c-row: that component hovers and takes a
+ * pointer cursor, and a row that lights up under the pointer promises a click
+ * that does nothing here.
+ * ==================================================================== */
+
+.c-keymap {
+  display: grid;
+  /* auto for the keys — they take their own width and no more, and fold when
+     there is not room for it; minmax(--c-keymap-action-min, 1fr) for the
+     action, so it keeps a readable column instead of being squeezed out.
+     Two unequal columns that inform.
+
+     THE FLOOR IS NOT DECORATION. This read `minmax(0, 1fr)` until 5 September
+     2026, and `0` is a promise the layout kept: the action column measured zero
+     at 375 px and its text was painted outside the panel, which was the whole
+     of the page's horizontal overflow. The reason is that a `1fr` track whose
+     floor is 0 yields everything to the `auto` track beside it, and `auto` asks
+     for max-content. A floor is the only thing that makes the keys fold rather
+     than the action collapse. See --c-keymap-action-min for the arithmetic. */
+  grid-template-columns: auto minmax(var(--c-keymap-action-min), 1fr);
+  gap: var(--space-3) var(--space-4);
+  align-items: baseline;
+  margin: 0;
+}
+
+.c-keymap > dt {
+  margin: 0;
+}
+
+/* NO `color` HERE, and it is not an omission. `.c-keymap > dd` is (0,1,1);
+   `.c-field__message--error` is (0,1,0) and would LOSE — the refused-shortcut
+   line would render in --text and the error would lose its third cue, in the
+   one component whose job is to say a shortcut was refused. The colour is
+   inherited instead, which nothing can out-specify by accident. */
+.c-keymap > dd {
+  margin: 0;
+}
+
+/* A refused combination explains itself on its own line, across both columns:
+   PRD R4 wants the interface to say a shortcut was refused, and to name it.
+   The colour comes from .c-field__message--error, which already exists and is
+   already measured on every surface. */
+.c-keymap__note {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+/* ==================================================================== *
  * SHOWCASE SCAFFOLDING — the page at #/systeme, and nothing else. Kept in
  * this file so no fifth stylesheet appears; every class is still .c-.
  * ==================================================================== */
@@ -620,13 +1293,8 @@
   margin-inline: auto;
 }
 
-.c-showcase__title {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: var(--size-title);
-  font-weight: var(--weight-semibold);
-  line-height: var(--leading-tight);
-}
+/* .c-showcase__title is declared with .c-screen__name, in the WINDOW SHELL
+   section above: the page's h1 and a screen's name are one decision. */
 
 .c-showcase__lede {
   margin: var(--space-2) 0 0;
@@ -784,4 +1452,55 @@
 .c-rules code {
   font-family: var(--font-numeric);
   color: var(--text);
+}
+
+/* A window, on the page. The V1 screens are judged at two widths and neither
+   is the width of this document, so the specimens are shown inside a box that
+   AIMS AT the real size instead of being described as "narrow" — read the
+   second paragraph before trusting that box, it does not always get there.
+   `min(100%, …)` and not a fixed width: at 375 px the 480 px frame becomes
+   375 px rather than pushing this page into a horizontal scroll — the one
+   thing the narrow review is supposed to catch.
+
+   AND THAT CLAMP IS ALSO A LIE THIS BOX TELLS, so it is written down rather
+   than left for the next reader to discover. `100%` is this PAGE's content
+   width, which has already paid --gutter twice; the frame therefore reaches
+   its nominal width only from a page of `--c-frame-app + 2 x --gutter` = 512,
+   and `--c-frame-narrow + 2 x --gutter` = 407 for the narrow one. MEASURED
+   5 September 2026: at a 480 px page the frame is 448, the launcher inside it
+   414 and folded to ONE column — while a true 480 px window gives it 446 and
+   TWO. The launcher's arithmetic is right; the frame around it was not the
+   size it claimed.
+   NOT REPAIRED WITH CSS, on purpose. Letting the frame reach 480 needs a
+   scroll container around it — a class, a wrapper in the markup, and an
+   `overflow-x` that clips the focus rings and --elev-3 on the other axis, on
+   the one page whose entire job is to be LOOKED at. Worse, the part of the
+   window pushed out of view is invisible to a screenshot, so a review would
+   read a truncated specimen without being told. A caption costs no rule and
+   hides nothing: the two Specimen captions in Showcase.tsx carry the
+   threshold, and this comment carries the reason.
+
+   --bg-window is right here for the reason its own token gives: "used ONLY
+   when the Mica material is unavailable", which is exactly a browser tab. */
+.c-frame {
+  --c-shell-height: 26rem;
+  inline-size: min(100%, var(--c-frame-app));
+  overflow: hidden;
+  border: var(--c-border-width) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-window);
+}
+
+.c-frame--narrow {
+  inline-size: min(100%, var(--c-frame-narrow));
+}
+
+/* Something for the title bar's blur to bite on inside a frame that is only
+   26rem tall. Without content taller than the shell, nothing scrolls under the
+   glass and the specimen would show a flat fill while claiming to show glass. */
+.c-frame__filler {
+  margin-block-start: var(--space-6);
+  color: var(--text-muted);
+  font-size: var(--size-caption);
+  line-height: var(--leading-normal);
 }
