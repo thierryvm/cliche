@@ -31,9 +31,13 @@
  *
  * CONTRAST IS MEASURED, AND RE-MEASURED
  *   Every ratio quoted below is recomputed from THIS FILE by
- *   `scripts/check-contrast.mjs`, which runs on `pnpm test` and in CI. 139
- *   pairings, WCAG 2.x relative luminance, alpha composited onto an explicit
- *   backdrop before measuring. A ratio typed into a comment is a claim about
+ *   `scripts/check-contrast.mjs`, which runs on `pnpm test` and in CI. WCAG 2.x
+ *   relative luminance, alpha composited onto an explicit backdrop before
+ *   measuring. The COUNT is printed on the script's last line and is not
+ *   repeated here: this comment said 139 until 5 September 2026, when a run
+ *   printed 143 — the four --veil-handle pairings added on 4 September had
+ *   made it false, silently, which is the exact failure this file's own header
+ *   warns about two paragraphs down. A ratio typed into a comment is a claim about
  *   the day it was typed; the script is what keeps it true afterwards, and it
  *   FAILS the build rather than warn. Rules that fell out of the measurement,
  *   and that lot D2 must respect, are `RULE:` comments next to their token.
@@ -286,6 +290,35 @@
      a stylesheet: a rule bypassed in silence invites five more. */
   --hit-min: 2.75rem;
 
+  /* Height of the custom title bar, added 5 September 2026 with the decision
+     to draw the window chrome ourselves (`decorations: false`).
+
+     It starts from --hit-min: the three window controls live in this bar, they
+     are clickable, and --hit-min's own RULE says 44 px applies to anything
+     clickable, icon-only included. Windows draws its own caption buttons 32 px
+     tall; matching that figure would have been the platform convention and a
+     bypass of our own rule in the same line.
+
+     THE EXTRA 8 PX ARE THE FOCUS RING, and they are not slack. The ring is
+     drawn OUTSIDE the control, by --focus-ring-offset plus --focus-ring-width;
+     the top edge of the window is the one place in this application where
+     "outside" does not exist. At exactly 44 px the ring on a window control
+     would lose its top segment to the window edge, in every theme, for keyboard
+     users only — the readers of PRD A2, which asks for a focused element
+     visible AT ALL TIMES. So the bar makes room instead of the ring shrinking:
+     44 + 2 x (2 + 2) = 52. Any second focus construction for this one control
+     is the exception that invites five more.
+
+     That « 2 + 2 » is now --focus-ring-space, declared with the ring at the
+     foot of this file. It was written out here until 5 September 2026, and the
+     open sum is precisely what let .c-titlebar forget to pay it on the
+     horizontal axis — see that token's own comment.
+
+     A TOKEN and not a component constant because the app shell outside
+     src/design/ has to offset its scrolling content by exactly this height.
+     A layout number two files must agree on is a token or it is a drift. */
+  --titlebar-height: calc(var(--hit-min) + 2 * var(--focus-ring-space));
+
   /* ------------------------------------------------------------------ *
    * RADII — four values, four jobs. Not one radius everywhere.
    * ------------------------------------------------------------------ */
@@ -366,6 +399,24 @@
      on decoration. Zero in both motion modes, on purpose. */
   --dur-veil: 0s;
 
+  /* How long the transient confirmation STAYS before it starts leaving. Not an
+     animation duration: the time a fact is readable.
+
+     WRITTEN AS A LITERAL, AND IT HAS TO BE. The obvious form is
+     `calc(var(--dur-medium) * 10)`, and it is a trap: --dur-medium falls to 0s
+     under prefers-reduced-motion, so the confirmation would be gone before it
+     was drawn, for exactly the users who asked for less movement. A dwell must
+     survive that media query, so it is declared here and restated NOWHERE
+     below.
+
+     2.4 s: the message is one short line of about twenty characters, and the
+     costly part is not reading it but NOTICING it — the eye is on the rectangle
+     that was just drawn, somewhere else on the screen, not on this window.
+     RULE: this token belongs to the SUCCESS confirmation only. A failure never
+     auto-dismisses; a message nobody managed to read names nothing, which is
+     what PRD R2 forbids. */
+  --dur-toast-dwell: 2400ms;
+
   --ease-out: cubic-bezier(0, 0, 0.2, 1); /* things entering the screen */
   --ease-in: cubic-bezier(0.4, 0, 1, 1); /* things leaving it */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1); /* things moving, staying visible */
@@ -379,6 +430,25 @@
   --focus-ring-color: var(--accent);
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
+
+  /* HOW FAR OUTSIDE A CONTROL THE RING REACHES: the offset, then the ring
+     itself. 4 px today. One name for that sum, because two rules now spend it
+     and a sum retyped is a sum that drifts — which is the same argument
+     --titlebar-height's own comment makes one section above.
+
+     --titlebar-height spends it TWICE, on the vertical axis: that is what makes
+     the bar 52 px and not 44. Since 5 September 2026 .c-titlebar spends it ONCE
+     on the trailing edge, and that second user is why this token exists. The
+     first version paid the ring on the vertical axis and NOTHING on the
+     horizontal one: measured in the running showcase, the clearance between the
+     last window control and the clipping edge of .c-shell was 0 px, so the ring
+     of « Fermer » lost its trailing segment — for keyboard users only, the
+     readers of PRD A2.
+
+     RULE: any rule that has to clear the ring reads THIS token. A --space-*
+     value that happens to equal 4 px would not follow the ring the day it
+     moves, and that day the failure is invisible to everyone who uses a mouse. */
+  --focus-ring-space: calc(var(--focus-ring-offset) + var(--focus-ring-width));
 
   /* ------------------------------------------------------------------ *
    * LAYERS — every z-index in this app comes from here. Gaps are wide
