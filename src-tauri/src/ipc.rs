@@ -329,6 +329,92 @@ mod tests {
     }
 
     #[test]
+    fn the_acl_grants_the_main_window_the_core_commands_its_title_bar_calls() {
+        // THE trap of a custom title bar: `getCurrentWindow().minimize()` is not
+        // one of this crate's commands, it is a command of Tauri's own `window`
+        // plugin. It compiles, it type-checks, and without a capability it is
+        // refused at RUN TIME - the button does nothing and says nothing, in a
+        // release build, with `Command … not allowed by ACL` sent to a page
+        // whose console nobody opens (`webview/mod.rs:1847-1850`).
+        //
+        // The names below were read, not guessed:
+        //   * the permission identifiers, from this build's own generated
+        //     schema, `gen/schemas/desktop-schema.json` - which is also where
+        //     `core:window:default`'s contents are listed, and it holds
+        //     `allow-is-maximized` and `allow-internal-toggle-maximize` but
+        //     NEITHER `allow-minimize`, `allow-toggle-maximize`, `allow-close`
+        //     NOR `allow-start-dragging`;
+        //   * the IPC command strings, from `node_modules/@tauri-apps/api/window.js`
+        //     (`plugin:window|minimize` at :883, `|toggle_maximize` at :868,
+        //     `|close` at :945, `|start_dragging` at :1408, `|is_maximized`
+        //     at :460) and from `tauri-2.11.5/src/window/scripts/drag.js:103-104`
+        //     for the two the drag region invokes by itself;
+        //   * the key the resolver files them under -
+        //     `format!("plugin:{core_plugin_name}|{allowed_command}")` for a
+        //     `core:` permission (`tauri-utils-2.9.3/src/acl/resolved.rs:133-134`),
+        //     against the FULL request command
+        //     (`tauri-2.11.5/src/webview/mod.rs:1796-1797`).
+        let mut context = tauri::generate_context!();
+
+        for (command, why) in [
+            ("plugin:window|minimize", "the « Réduire » control"),
+            (
+                "plugin:window|toggle_maximize",
+                "the « Agrandir »/« Restaurer » control",
+            ),
+            ("plugin:window|close", "the « Fermer » control"),
+            (
+                "plugin:window|start_dragging",
+                "moving the window by its bar - invoked by Tauri's own drag-region script, \
+                 not by our code, which is what makes it easy to leave ungranted",
+            ),
+            (
+                "plugin:window|internal_toggle_maximize",
+                "double-clicking the bar to maximise - also Tauri's script, and granted by \
+                 `core:window:default` rather than by name here",
+            ),
+            (
+                "plugin:window|is_maximized",
+                "knowing WHICH of the two the second control should draw; granted by \
+                 `core:window:default`",
+            ),
+            (
+                "plugin:event|listen",
+                "learning that the window was resized, so the glyph above is the state and \
+                 not the last guess; granted by `core:event:default`",
+            ),
+        ] {
+            assert!(
+                granted(&mut context, command, MAIN_WINDOW_LABEL),
+                "`{command}` is not granted to `{MAIN_WINDOW_LABEL}`, so {why} fails silently \
+                 at run time. Name the matching `core:window:*` / `core:event:*` permission in \
+                 src-tauri/capabilities/default.json."
+            );
+        }
+
+        // The veil holds no `core:` permission at all (capabilities/veil.json),
+        // and these are the reason that stays true: a full-screen always-on-top
+        // sheet that can move, minimise or close the window under it is a much
+        // larger thing than a sheet that can only hand back a rectangle. This
+        // half also proves the grants above are scoped to a window rather than
+        // handed to the process.
+        for command in [
+            "plugin:window|minimize",
+            "plugin:window|toggle_maximize",
+            "plugin:window|close",
+            "plugin:window|start_dragging",
+            "plugin:window|is_maximized",
+            "plugin:event|listen",
+        ] {
+            assert!(
+                !granted(&mut context, command, VEIL_WINDOW_LABEL),
+                "`{command}` must NOT reach `{VEIL_WINDOW_LABEL}`: that window is up while the \
+                 screen is frozen, and it draws no chrome of its own"
+            );
+        }
+    }
+
+    #[test]
     fn every_registered_command_is_granted_to_a_window() {
         // The net for the day somebody adds a command. Since this application
         // declares an ACL manifest, a command nobody granted is refused at

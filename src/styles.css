@@ -4,14 +4,19 @@
 @import './design/tokens.css';
 
 /*
- * The home screen's own layer, and nothing else. Every value below is a
- * var(--…): there is no bare rem, no bare weight and no bare opacity left in
- * this file, because a number typed here is a number the token file cannot
- * theme and check-contrast.mjs cannot measure.
+ * The document's base layer: what an element is worth before any component
+ * class touches it, plus the monitor read-out of the diagnostic screen. Every
+ * value below is a var(--…): there is no bare rem, no bare weight and no bare
+ * opacity left in this file, because a number typed here is a number the token
+ * file cannot theme and check-contrast.mjs cannot measure.
  *
  * ONE dependency outside tokens.css: --c-border-width, the component layer's
  * single hairline, declared in src/design/components.css. App.tsx imports that
- * file for .c-note--danger, so it is always present when this one is.
+ * file for .c-shell, so it is always present when this one is.
+ *
+ * WHAT LEFT ON 6 SEPTEMBER 2026: `.app` and `.subtitle`. They dressed the old
+ * home screen, which the launcher replaced; the padding is now .c-shell__body's
+ * --gutter, and spending it twice was the only thing that wrapper still did.
  */
 
 :root {
@@ -35,29 +40,18 @@ body {
      the case where that material is unavailable. */
 }
 
-.app {
-  /* --gutter IS this padding. The 448 px content budget written into
-     tokens.css is computed from it at the window's declared 480 px minimum;
-     the 1.5rem that used to sit here silently spent 32 px of that budget. */
-  padding: var(--gutter);
-}
-
 h1 {
   margin: 0;
   /* One --size-title per window, and --font-display exists for that size
-     alone. Same three declarations as .c-showcase__title — one decision. */
+     alone. Same three declarations as .c-showcase__title — one decision.
+     A BASE, not a component: both headings the application renders today also
+     carry .c-screen__name or .c-showcase__title, which out-specify every line
+     here. This rule is what a bare <h1> would get, so that a screen written
+     later starts at the product's title style rather than the browser's. */
   font-family: var(--font-display);
   font-size: var(--size-title);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
-}
-
-.subtitle {
-  margin: var(--space-1) 0 var(--space-6);
-  /* Was `opacity: 0.7`, which is a ratio nothing measures: it moves the text
-     AND whatever it sits on. --text-muted is the token for "the sentence under
-     a title", and check-contrast.mjs holds it at 6.67:1 or better. */
-  color: var(--text-muted);
 }
 
 h2 {

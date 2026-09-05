@@ -1,17 +1,35 @@
+/*
+ * The window: its chrome, and whichever screen the hash asks for.
+ *
+ * No router, and still none: three hashes, three screens. A router is a
+ * dependency, and this application has three destinations.
+ */
+
 import { useEffect, useState } from 'react';
 
-import { Glyph, ICON } from './design/Glyph';
+import DisplaysProbe from './DisplaysProbe';
+import Launcher from './Launcher';
+import TitleBar from './TitleBar';
 import Showcase from './design/Showcase';
-import { describeDisplays } from './displays';
-import type { DisplayInfo } from './displays';
 
-// This screen renders .c-note--danger, so it depends on the material layer
-// directly. It used to arrive only because Showcase happens to import it —
+// This file renders .c-shell and .c-shell__body, so it depends on the material
+// layer directly. It used to arrive only because Showcase happens to import it —
 // an accident that would break the day the showcase is lazy-loaded.
 import './design/components.css';
 
-/** The design system page, at #/systeme. No router: one hash, one screen. */
+/** The design system page. Draws every state; calls nothing. */
 const SHOWCASE_ROUTE = '#/systeme';
+
+/**
+ * The monitor read-out, on its way to the help page.
+ *
+ * A route rather than a component nobody mounts: an unmounted diagnostic is a
+ * diagnostic that stops working in silence. See the header of `DisplaysProbe`.
+ */
+const DIAGNOSTIC_ROUTE = '#/diagnostic';
+
+/** The name in the title bar. The product's NAME, so not in the catalogue. */
+const WINDOW_TITLE = 'Cliché';
 
 function useHashRoute(): string {
   const [hash, setHash] = useState(() => window.location.hash);
@@ -25,106 +43,22 @@ function useHashRoute(): string {
   return hash;
 }
 
-type Probe =
-  | { readonly status: 'probing' }
-  | { readonly status: 'ready'; readonly displays: readonly DisplayInfo[] }
-  | { readonly status: 'failed'; readonly message: string };
-
-function toMessage(error: unknown): string {
-  // A rejected `invoke` carries the `Err(String)` returned by the command, not
-  // an Error instance, so `error.message` would be undefined here.
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return typeof error === 'string' ? error : JSON.stringify(error);
-}
-
 export default function App() {
   const route = useHashRoute();
-  const onShowcase = route === SHOWCASE_ROUTE;
-  const [probe, setProbe] = useState<Probe>({ status: 'probing' });
 
-  useEffect(() => {
-    // The showcase never displays this probe, and it has to render in a plain
-    // browser where `window.__TAURI__` does not exist. Firing the IPC call from
-    // here would cost a round trip nobody reads, and would reject on every
-    // visit outside the Tauri window. The guard is INSIDE the effect, not
-    // around it: a hook that runs only on some routes changes the hook order
-    // between renders, which React forbids.
-    if (onShowcase) {
-      return;
-    }
-
-    // StrictMode runs effects twice in development, so `describe_displays` is
-    // logged twice in the terminal. That is the dev double-render, not a bug.
-    let abandoned = false;
-
-    describeDisplays().then(
-      (displays) => {
-        if (!abandoned) {
-          setProbe({ status: 'ready', displays });
-        }
-      },
-      (error: unknown) => {
-        if (!abandoned) {
-          setProbe({ status: 'failed', message: toMessage(error) });
-        }
-      },
-    );
-
-    return () => {
-      abandoned = true;
-    };
-  }, [onShowcase]);
-
-  // After the hooks, never before them: the hook order must not depend on the
-  // route.
-  if (onShowcase) {
+  // The showcase is the ONE screen that renders no chrome: it has to open in a
+  // plain browser tab, and a title bar whose controls drive a window that is
+  // not there would be the first thing a reviewer clicked.
+  if (route === SHOWCASE_ROUTE) {
     return <Showcase />;
   }
 
   return (
-    <main className="app">
-      <h1>Cliché</h1>
-      <p className="subtitle">Local screenshot utility. Nothing leaves this machine.</p>
-
-      <section aria-labelledby="displays-heading">
-        <h2 id="displays-heading">Displays detected at startup</h2>
-        {probe.status === 'probing' && <p role="status">Reading the monitor list…</p>}
-
-        {/* PRD A4: the red is the THIRD cue, never the first. The word
-            "Failed" and the alert glyph carry the state on their own, which is
-            what .c-note--danger is built for — same component the showcase
-            publishes at #/systeme. A bare red sentence was colour alone. */}
-        {probe.status === 'failed' && (
-          <div role="alert" className="c-note c-note--danger">
-            <Glyph d={ICON.alert} />
-            <span>
-              <strong>Failed</strong> — the monitor list could not be read:{' '}
-              {probe.message}
-            </span>
-          </div>
-        )}
-
-        {probe.status === 'ready' && (
-          <>
-            <p role="status">
-              {probe.displays.length} display{probe.displays.length === 1 ? '' : 's'}
-            </p>
-            <ul className="displays">
-              {probe.displays.map((display) => (
-                <li key={`${display.name}@${display.x},${display.y}`} className="display">
-                  <span className="display-name">{display.name || '(unnamed)'}</span>
-                  <span className="display-facts">
-                    {display.width}×{display.height} physical px · origin ({display.x},{' '}
-                    {display.y}) · scale {display.scaleFactor}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </section>
-    </main>
+    <div className="c-shell">
+      <TitleBar title={WINDOW_TITLE} />
+      <div className="c-shell__body">
+        {route === DIAGNOSTIC_ROUTE ? <DisplaysProbe /> : <Launcher />}
+      </div>
+    </div>
   );
 }
