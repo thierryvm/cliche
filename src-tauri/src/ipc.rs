@@ -306,6 +306,17 @@ mod tests {
              is up while the screen is frozen"
         );
 
+        assert!(
+            granted(&mut context, "describe_shortcuts", MAIN_WINDOW_LABEL),
+            "`describe_shortcuts` is invoked from src/shortcuts.ts, in the `{MAIN_WINDOW_LABEL}` \
+             window; without it the help page and the launcher have no combination to show"
+        );
+        assert!(
+            !granted(&mut context, "describe_shortcuts", VEIL_WINDOW_LABEL),
+            "the veil shows no help; the rule this obeys is that every command names ONE window, \
+             so that an ungranted one reads as an oversight rather than a considered exception"
+        );
+
         // Without this pair the whole test could be green because the resolver
         // says yes to everything.
         for window in [MAIN_WINDOW_LABEL, VEIL_WINDOW_LABEL] {
