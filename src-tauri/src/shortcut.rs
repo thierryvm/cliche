@@ -10,6 +10,12 @@
 //! diagnostic is a bad trade. Hence `try_state` rather than `state`, saturating
 //! arithmetic, and every error turned into a printed line.
 //!
+//! The COMBINATION is not written here. It is a row of `shortcuts::REGISTRY`
+//! (`shortcuts.rs`, plural - one letter away, and a different file), which is
+//! also what the help page reads. This module looks its entry up by id and
+//! binds it; the two files are kept apart because that one declares a command
+//! and this one deliberately declares none, as the next section explains.
+//!
 //! # What guards this module, and what does not - stated because it is easy to
 //! # assume the wrong one
 //!
@@ -31,28 +37,14 @@
 //! this module's distance from the frontend, nor by the absent plugin permission
 //! described just above.
 
-use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{
-    Builder as GlobalShortcutBuilder, GlobalShortcutExt, Shortcut, ShortcutState,
+    Builder as GlobalShortcutBuilder, GlobalShortcutExt, ShortcutState,
 };
 
-/// The capture shortcut, in the plugin's own syntax.
-///
-/// ONE place on purpose. The same combination is already announced to the user
-/// in `src/design/Showcase.tsx` ("Ctrl + Maj + 2 decoupe une zone"), and lot 2
-/// turns this constant into the registry the in-app help derives from. Two
-/// values for one fact always drift apart.
-///
-/// `Digit2` rather than `2`: the parser accepts both, but a W3C code names a
-/// PHYSICAL key rather than the character it produces. On the Belgian AZERTY
-/// keyboard this project is used on, that key types `e` with an accent
-/// unshifted and `2` with Shift - so `Ctrl+Shift+Digit2` is exactly the
-/// "Ctrl + Maj + 2" the interface promises, and stays that key whatever the
-/// active layout.
-pub const CAPTURE_SHORTCUT: &str = "Ctrl+Shift+Digit2";
+use crate::shortcuts::{self, ShortcutEntry};
 
 /// How many finished runs before the report prints itself, with no further
 /// action from whoever is measuring.
@@ -62,13 +54,24 @@ pub const CAPTURE_SHORTCUT: &str = "Ctrl+Shift+Digit2";
 /// more information than "the worst of ten".
 const RUNS_PER_REPORT: usize = 20;
 
-/// Parses [`CAPTURE_SHORTCUT`].
+/// The one registry entry this module binds.
 ///
-/// Split out because it is the one part of this module that needs no event
-/// loop: a unit test can hold the constant against the plugin's real parser.
-pub fn capture_shortcut() -> Result<Shortcut, String> {
-    Shortcut::from_str(CAPTURE_SHORTCUT)
-        .map_err(|error| format!("`{CAPTURE_SHORTCUT}` is not a valid shortcut: {error}"))
+/// The combination itself no longer lives here: it is a row of
+/// `shortcuts::REGISTRY`, which is also what the main window reads through
+/// `describe_shortcuts`. Looked up by id rather than by position, so reordering
+/// the table cannot silently change which shortcut starts a capture.
+///
+/// Returns an error instead of panicking on a missing entry, for the reason
+/// this whole module is written the way it is: an application with no capture
+/// shortcut and one loud line in the terminal is worth more than no application.
+fn capture_entry() -> Result<&'static ShortcutEntry, String> {
+    shortcuts::entry(shortcuts::CAPTURE_REGION).ok_or_else(|| {
+        format!(
+            "[cliche] shortcut: the registry has no `{}` entry, so NOTHING starts a capture. \
+             This is a programming error in src-tauri/src/shortcuts.rs, not a machine problem.",
+            shortcuts::CAPTURE_REGION
+        )
+    })
 }
 
 /// Whether the run just filed completes a batch worth reporting on.
@@ -86,9 +89,13 @@ pub(crate) fn report_due(run_number: usize) -> bool {
 /// Pure, so its wording is under test. This message is the only thing standing
 /// between "another program already owns Ctrl+Shift+2" and an application that
 /// looks perfectly fine and does nothing at all - the worst of both worlds.
-fn registration_failure(reason: &str) -> String {
+///
+/// The combination is passed in rather than read from a constant here: it is
+/// the registry entry's, and taking it from anywhere else would let the message
+/// name a combination other than the one that was actually refused.
+fn registration_failure(accelerator: &str, reason: &str) -> String {
     format!(
-        "[cliche] shortcut: FAILED to take {CAPTURE_SHORTCUT} ({reason}). \
+        "[cliche] shortcut: FAILED to take {accelerator} ({reason}). \
          Cliche is running WITHOUT its capture shortcut - another program is \
          most likely holding that combination."
     )
@@ -100,13 +107,19 @@ fn registration_failure(reason: &str) -> String {
 /// caller is the one that decides the application keeps going, so the caller is
 /// where that decision should be readable.
 pub fn install(app: &AppHandle) -> Result<(), String> {
-    let shortcut = capture_shortcut().map_err(|reason| registration_failure(&reason))?;
+    let entry = capture_entry()?;
+
+    // Bound once so that all three ways this can fail name the SAME
+    // combination - the entry's, not a constant that could have moved.
+    let refused = |reason: &str| registration_failure(entry.accelerator, reason);
+
+    let shortcut = shortcuts::parse(entry).map_err(|reason| refused(&reason))?;
 
     // The plugin is loaded here, next to its only use, rather than in the
     // builder chain: `install` then either wires the shortcut completely or
     // fails with one message, and `lib.rs` has a single line to read.
     app.plugin(GlobalShortcutBuilder::new().build())
-        .map_err(|error| registration_failure(&format!("plugin failed to load: {error}")))?;
+        .map_err(|error| refused(&format!("plugin failed to load: {error}")))?;
 
     // Owned by the closure, which is `Fn`: an atomic is what lets it count
     // without `&mut`. `Relaxed` because this counter is only ever compared with
@@ -153,20 +166,29 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
             // report every twenty of those.
             crate::veil::perform_capture(app);
         })
-        .map_err(|error| registration_failure(&error.to_string()))
+        .map_err(|error| refused(&error.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tauri_plugin_global_shortcut::{Code, Modifiers};
+    use std::str::FromStr;
+    use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
 
     #[test]
     fn the_announced_shortcut_is_what_the_plugin_parser_actually_accepts() {
         // The value the interface promises the user, held against the parser
         // that will have to register it. A typo in the constant fails here
         // rather than at run time, in a message nobody is watching for.
-        let shortcut = capture_shortcut().expect("the capture shortcut must parse");
+        //
+        // ADAPTED on 5 September 2026: the combination moved out of a constant
+        // in this file and into `shortcuts::REGISTRY`, so the test reads it
+        // from the entry `install` actually binds. The assertions themselves
+        // are untouched - and they are the point. `shortcuts.rs` checks that
+        // EVERY entry parses; this one checks that the entry starting a capture
+        // is still Ctrl + Maj + 2, which is what the interface says out loud.
+        let entry = capture_entry().expect("the registry must hold the capture entry");
+        let shortcut = shortcuts::parse(entry).expect("the capture shortcut must parse");
 
         assert_eq!(shortcut.key, Code::Digit2);
         assert_eq!(
@@ -207,10 +229,16 @@ mod tests {
 
     #[test]
     fn a_refused_shortcut_names_the_combination_and_the_reason() {
-        let message = registration_failure("HotKey already registered");
+        // ADAPTED on 5 September 2026: `registration_failure` now takes the
+        // combination rather than reading a constant, so the test passes the
+        // entry's own accelerator - and asserts against that same value rather
+        // than against a second copy typed here. The three assertions are
+        // unchanged.
+        let entry = capture_entry().expect("the registry must hold the capture entry");
+        let message = registration_failure(entry.accelerator, "HotKey already registered");
 
         assert!(
-            message.contains(CAPTURE_SHORTCUT),
+            message.contains(entry.accelerator),
             "a user cannot free a combination the message does not name: {message}"
         );
         assert!(

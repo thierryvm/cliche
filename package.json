@@ -10,8 +10,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/check-version.mjs && node scripts/check-contrast.mjs && vitest run && cargo test --manifest-path src-tauri/Cargo.toml",
+    "test": "node scripts/check-version.mjs && node scripts/check-contrast.mjs && node scripts/check-strings.mjs && vitest run && cargo test --manifest-path src-tauri/Cargo.toml",
     "test:contrast": "node scripts/check-contrast.mjs",
+    "test:strings": "node scripts/check-strings.mjs",
     "test:unit": "vitest run",
     "tauri": "tauri"
   },

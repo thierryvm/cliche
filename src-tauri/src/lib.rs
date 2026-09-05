@@ -9,10 +9,12 @@ mod displays;
 pub mod geometry;
 pub mod ipc;
 mod shortcut;
+mod shortcuts;
 pub mod timing;
 pub mod veil;
 
 pub use displays::{collect_displays, describe_displays, summarize, DisplayInfo};
+pub use shortcuts::{describe_shortcuts, ShortcutCategory, ShortcutEntry, REGISTRY};
 
 use displays::print_displays;
 use tauri::Manager;
@@ -58,6 +60,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             displays::describe_displays,
+            shortcuts::describe_shortcuts,
             veil::veil_ready,
             veil::veil_decoded,
             veil::veil_painted,

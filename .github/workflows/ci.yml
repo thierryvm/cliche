@@ -66,6 +66,12 @@ jobs:
       - name: Contrast of the design tokens
         run: node scripts/check-contrast.mjs
 
+      # Third of the same family: a sentence a human could have copied. It holds
+      # src/strings.ts against src/design/Showcase.tsx, where the wording is
+      # decided, and against the rest of src/, where it must appear nowhere else.
+      - name: One place for every label
+        run: node scripts/check-strings.mjs
+
       - name: TypeScript - strict, zero any
         run: pnpm typecheck
 
