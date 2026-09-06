@@ -1,6 +1,8 @@
 # Cliché — le premier essai, en deux minutes
 
-> Pour Thierry, à faire soi-même. Écrit le 6 septembre 2026.
+**➜ L'installeur à télécharger : [`Cliche_0.1.0_x64-setup.exe`](https://github.com/thierryvm/cliche/releases/download/v0.1.0/Cliche_0.1.0_x64-setup.exe)** — 2 362 737 octets, sur la [release v0.1.0](https://github.com/thierryvm/cliche/releases/tag/v0.1.0).
+
+> Pour Thierry, à faire soi-même. Écrit le 6 septembre 2026, lien de release ajouté le 7.
 >
 > C'est la première fois que Cliché sort du dépôt. Rien de ce qui suit n'a été
 > observé sur une machine : l'application n'a jamais été lancée par l'agent, ni
@@ -28,10 +30,21 @@ cd F:\PROJECTS\Apps\cliche
 gh run download --name cliche-nsis-installer --dir "$env:USERPROFILE\Downloads\cliche"
 ```
 
-**Depuis une release publiée** (quand le tag `v0.1.0` existera) :
+**Depuis la release publiée — c'est celui-là qu'il faut prendre.** Publiée le
+7 septembre 2026, c'est exactement l'artefact produit par la CI sur le commit
+`493ae0e`, pas un binaire construit sur cette machine :
+
+<https://github.com/thierryvm/cliche/releases/download/v0.1.0/Cliche_0.1.0_x64-setup.exe>
 
 ```powershell
+work perso -NoCd
 gh release download v0.1.0 --pattern "*setup.exe" --dir "$env:USERPROFILE\Downloads\cliche"
+```
+
+Sa somme SHA-256 est publiée dans le corps de la release. Pour la contrôler :
+
+```powershell
+Get-FileHash "$env:USERPROFILE\Downloads\cliche\Cliche_0.1.0_x64-setup.exe" -Algorithm SHA256
 ```
 
 ---
@@ -194,7 +207,19 @@ Court suffit :
 
 ## Ce qui a été vérifié sur le binaire, sans le lancer
 
-Le 6 septembre 2026, sur `src-tauri\target\release\cliche.exe` (9,45 Mo) :
+**Le 7 septembre 2026, sur le binaire RÉELLEMENT PUBLIÉ** — l'installeur de la
+release a été ouvert sans être exécuté, son flux LZMA décompressé
+(10 066 843 octets) et le manifeste lu dedans : **1565 octets, 0 octet
+non-ASCII**, `dpiAware` / `dpiAwareness` / `longPathAware` présents.
+
+Le piège que ce contrôle devait éviter, et qui est mesuré : l'installeur NSIS
+porte **son propre** manifeste, en clair au début du fichier, de 1297 octets.
+Le chercher là aurait rendu un OK sur le mauvais fichier. L'outil est
+`scripts/inspect-nsis.py`, et il a été sondé dans les deux sens.
+
+Le 6 septembre 2026, sur `src-tauri\target\release\cliche.exe` (9,45 Mo), qui
+est une AUTRE compilation — les deux sommes SHA-256 diffèrent, le build n'est
+pas reproductible bit à bit :
 
 | Contrôle | Résultat |
 | --- | --- |

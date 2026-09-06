@@ -35,10 +35,35 @@ work perso -NoCd; pnpm test                               # check-version + chec
 work perso -NoCd; pnpm tauri build                        # produit l'installeur NSIS
 ```
 
+Puis **contrôler le manifeste du binaire qui sera RÉELLEMENT publié**, sans
+l'installer ni le lancer :
+
+```powershell
+python scripts/inspect-nsis.py <chemin de l'installeur telecharge depuis la CI>
+```
+
+Il doit rendre 0, avec **0 octet non-ASCII** et `dpiAware` / `dpiAwareness` /
+`longPathAware` présents. Deux pièges que cet outil existe pour éviter, tous
+deux mesurés le 7 septembre 2026 :
+
+- l'installeur NSIS porte **son propre** manifeste, en clair au début du fichier
+  (1297 octets), différent de celui de l'application (1565). Le lire là donne un
+  OK sur le mauvais fichier ;
+- contrôler le binaire de `target/release` ne dit rien de celui publié : les
+  deux sommes SHA-256 diffèrent, le build n'est pas reproductible bit à bit.
+
+*(Ce script demande Python, qui n'est une dépendance ni du build ni de la CI —
+seulement de cette procédure-ci.)*
+
 Puis **lancer l'installeur produit et l'application installée**. Un binaire
 compilé n'est pas un binaire qui démarre : le 2 septembre 2026, `cargo build`
 rendait 0 sur un exécutable que Windows refusait de lancer (manifeste transcodé
 en Latin-1, `os error 14001`). Le build ne l'a pas vu. Seul le lancement l'a vu.
+
+> **Cette dernière étape n'a PAS été faite pour la v0.1.0**, publiée le
+> 7 septembre 2026 : Thierry l'a arbitré, et le corps de la release le dit en
+> toutes lettres. Le contrôle du manifeste ci-dessus est ce qui a été fait à la
+> place — il écarte la cause connue, il ne prouve pas le démarrage.
 
 ---
 
