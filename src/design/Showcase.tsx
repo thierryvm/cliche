@@ -650,6 +650,12 @@ export default function Showcase() {
         {/* ---------------------------------------------------------- */}
         <Section id="s-keymap" label="V1 · aide — le registre, jamais recopié">
           <div className="c-panel">
+            {/* The screen's NAME, published here on 6 September 2026 because it
+                was missing and the catalogue may not invent a word the system
+                does not draw. Same class the launcher uses for « Capturer »:
+                a screen name is one thing, a category heading below it is
+                another, and « Aide » had been neither. */}
+            <h2 className="c-screen__name">Aide</h2>
             <h3 className="c-section__label">Capture</h3>
             <dl className="c-keymap">
               <dt>
