@@ -71,13 +71,93 @@ export type ShortcutStatus =
   | { readonly status: 'not-attempted'; readonly reason: string };
 
 /**
+ * A combination, and the caps that draw it.
+ *
+ * Mirrors `Combination` in `src-tauri/src/shortcuts.rs`. The two travel
+ * together because for a combination the USER chose there is no hand-written
+ * registry row to read the caps from: Rust derives them once, when it accepts
+ * the combination, and everything downstream carries what it derived. Nothing
+ * on this side turns an accelerator into key caps — that rule lives next to the
+ * table it has to agree with.
+ */
+export interface Combination {
+  /** The combination in the plugin's syntax, e.g. `Ctrl+Shift+Digit2`. */
+  readonly accelerator: string;
+  /** The same combination as it is DRAWN, one chip per key. */
+  readonly keys: readonly string[];
+}
+
+/**
+ * What became of a request to change the capture combination.
+ *
+ * Mirrors `ShortcutChange` in `src-tauri/src/shortcut.rs`, tagged on `outcome`.
+ * The three literals are the ones Rust is told to emit, and a Rust test —
+ * `the_three_change_tags_are_the_ones_serde_emits_and_the_frontend_reads` —
+ * reads THIS file to hold the two sides together. TypeScript cannot: the value
+ * arrives at run time.
+ *
+ * # `kept` is the one that matters
+ *
+ * A combination the operating system refuses does NOT leave this application
+ * without a shortcut: the previous one is registered again, at once, and this
+ * answer names both. `reason` is the system's own words, in English, for a
+ * console — what the screen says is decided from the catalogue, in
+ * `src/Settings.tsx`.
+ */
+export type ShortcutChange =
+  /** The combination asked for is the one that is live. */
+  | {
+      readonly outcome: 'changed';
+      readonly active: Combination;
+      /**
+       * Whether the choice will survive a restart. `false` means the shortcut
+       * WORKS and the settings file could not be written — which has to be said,
+       * or the user finds the old combination back tomorrow with nothing having
+       * warned them.
+       */
+      readonly saved: boolean;
+    }
+  /** It was refused, and the PREVIOUS combination is still live. */
+  | {
+      readonly outcome: 'kept';
+      readonly refused: Combination;
+      readonly active: Combination;
+      readonly reason: string;
+    }
+  /** It was refused and no combination is live at all. */
+  | { readonly outcome: 'stranded'; readonly refused: Combination; readonly reason: string };
+
+/**
  * Asks the backend for the shortcut registry.
+ *
+ * What comes back is the table with the CAPTURE row set to the combination this
+ * launch really offered the operating system — see `rows` in
+ * `src-tauri/src/shortcuts.rs`. That substitution is why nothing on this side
+ * knows a shortcut is settable at all: the help page and the launcher's reminder
+ * go on reading one table.
  *
  * Rejects with the backend's error string; the ACL and `ipc::ensure_from` both
  * refuse this command to any window but `main`.
  */
 export function describeShortcuts(): Promise<ShortcutEntry[]> {
   return invoke<ShortcutEntry[]>('describe_shortcuts');
+}
+
+/**
+ * Asks the backend to take a new capture combination, NOW.
+ *
+ * The old one is released and the new one taken before this resolves. A
+ * combination the system refuses comes back as `kept`, with the previous one
+ * registered again — this promise rejects only when the combination is one Rust
+ * will not offer at all (no modifier, a key it cannot draw, nonsense), or when
+ * the ACL refused the call.
+ *
+ * The argument name is `accelerator` because Tauri matches a command's
+ * parameters by name; renaming it here without renaming it in
+ * `set_capture_shortcut` would fail at run time and nowhere else.
+ */
+export function setCaptureShortcut(accelerator: string): Promise<ShortcutChange> {
+  return invoke<ShortcutChange>('set_capture_shortcut', { accelerator });
 }
 
 /**

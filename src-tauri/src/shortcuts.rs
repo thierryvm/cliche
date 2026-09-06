@@ -19,28 +19,41 @@
 //!   plugin, binds one handler on the plugin's hotkey thread, and must never
 //!   panic. Nothing there is reachable from a webview, and its header explains
 //!   at length why that matters.
-//! - `shortcuts.rs` (this file, plural) is the TABLE, plus the two commands that
-//!   hand the main window what it needs to talk about shortcuts: the table
-//!   itself, and - since 6 September 2026 - what the operating system ANSWERED
-//!   when `shortcut::install` offered it the capture combination. Both are
-//!   webview-facing, so each carries a capability (`allow-describe-shortcuts`,
-//!   `allow-describe-shortcut-status`) and an `ipc::ensure_from` check.
-//!   The status TYPE lives in `shortcut.rs`, next to the only function that can
-//!   produce one; this file is where it crosses to a webview.
+//! - `shortcuts.rs` (this file, plural) is the TABLE, plus the three commands
+//!   that hand the main window what it needs to talk about shortcuts: the table
+//!   itself, what the operating system ANSWERED when `shortcut::install` offered
+//!   it the capture combination, and - since 6 September 2026 - the one command
+//!   that CHANGES that combination. All three are webview-facing, so each
+//!   carries a capability (`allow-describe-shortcuts`,
+//!   `allow-describe-shortcut-status`, `allow-set-capture-shortcut`) and an
+//!   `ipc::ensure_from` check. The status TYPE lives in `shortcut.rs`, next to
+//!   the only function that can produce one; this file is where it crosses to a
+//!   webview.
 //!
 //! They were kept apart rather than merged for that last difference: declaring
 //! a command inside `shortcut.rs` would falsify the paragraph its header spends
 //! on "no command is declared here, so there is no `invoke` frontier for an ACL
 //! to sit on" - which is the whole point that paragraph makes.
+//!
+//! # THE TABLE IS A PROMISE; THE CAPTURE ROW IS WHAT WAS ACTUALLY OFFERED
+//!
+//! Since the combination became settable, [`REGISTRY`] states what this
+//! application ships with and no longer what it holds on this machine.
+//! [`describe_shortcuts`] therefore does not hand the table over as it stands:
+//! it builds [`ShortcutRow`]s and puts the combination that was actually offered
+//! to the system in the capture row - see [`rows`]. Everything downstream reads
+//! that, so the help page and the launcher's reminder go on naming the
+//! combination the user can really press, with not one file under `src/`
+//! knowing that a shortcut is settable at all.
 
 use std::str::FromStr;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Webview};
-use tauri_plugin_global_shortcut::Shortcut;
+use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
 
 use crate::ipc;
-use crate::shortcut::ShortcutStatus;
+use crate::shortcut::{CaptureShortcut, ShortcutChange, ShortcutStatus};
 
 /// Where a shortcut belongs in the in-app help.
 ///
@@ -118,18 +131,215 @@ pub fn entry(id: &str) -> Option<&'static ShortcutEntry> {
     REGISTRY.iter().find(|candidate| candidate.id == id)
 }
 
-/// Parses an entry's combination with the plugin's own parser.
+/// Parses a combination with the plugin's own parser.
 ///
 /// Split out because it is the one part of the registry that needs no event
 /// loop: a unit test can hold every entry against the parser that will have to
 /// register it.
-pub fn parse(entry: &ShortcutEntry) -> Result<Shortcut, String> {
-    Shortcut::from_str(entry.accelerator).map_err(|error| {
-        format!(
-            "`{}` (registry entry `{}`) is not a valid shortcut: {error}",
-            entry.accelerator, entry.id
-        )
-    })
+///
+/// Takes the ACCELERATOR and not an entry, since 6 September 2026: a settable
+/// shortcut arrives as a bare string from the page, and it has to go through the
+/// very parser the table's own rows go through. One door, not two.
+pub fn parse(accelerator: &str) -> Result<Shortcut, String> {
+    Shortcut::from_str(accelerator)
+        .map_err(|error| format!("`{accelerator}` is not a valid shortcut: {error}"))
+}
+
+/// A combination this application is willing to register, and the caps it draws.
+///
+/// The two travel together on purpose. An accelerator alone would leave every
+/// reader to guess what to put on screen for it, and guessing is what the
+/// registry's `keys` field exists to refuse - see its own comment. For a
+/// combination the USER chose there is no hand-written row to read, so the caps
+/// are derived once, here, by [`accept`], and carried everywhere afterwards.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Combination {
+    /// The combination in the PLUGIN's syntax, canonical - see [`accept`].
+    pub accelerator: String,
+    /// The same combination as the interface draws it, one chip per key.
+    pub keys: Vec<String>,
+}
+
+/// Every modifier this application will register, in the order it draws them.
+///
+/// Three columns, and the third is the reason this is a table rather than two
+/// `match` arms: the plugin's TOKEN (`Shift`) and the French CAP (`Maj`) are not
+/// the same string, and the ORDER is shared by both. « Maj + Ctrl + 2 » names
+/// the same combination and is not what this application publishes.
+///
+/// The list is also the closed set of modifiers [`accept`] will take: a
+/// combination carrying a bit that is not here would be drawn without it, which
+/// is the one way a cap row can lie about what was registered.
+const MODIFIERS: [(Modifiers, &str, &str); 4] = [
+    (Modifiers::CONTROL, "Ctrl", "Ctrl"),
+    (Modifiers::SHIFT, "Shift", "Maj"),
+    (Modifiers::ALT, "Alt", "Alt"),
+    (Modifiers::SUPER, "Super", "Windows"),
+];
+
+/// The cap a physical key code is drawn with, or `None` for one nobody chose.
+///
+/// `Code` prints its W3C name, so the two families that matter are derived from
+/// it rather than listed one by one: `Digit2` -> `2`, `KeyA` -> `A`. A physical
+/// code names a KEY and not the character it produces; on the Belgian AZERTY
+/// this application is used on, the `Digit2` key types `2` with Shift, which is
+/// exactly what the registry's hand-written row already says.
+///
+/// `None` rather than a guess, and that is the whole design: an unknown key is
+/// refused by [`accept`] instead of being published under a cap invented here.
+/// A user cannot press a key whose name the screen got wrong.
+fn cap(code: Code) -> Option<String> {
+    let name = code.to_string();
+
+    for prefix in ["Digit", "Key"] {
+        if let Some(rest) = name.strip_prefix(prefix) {
+            let mut characters = rest.chars();
+            return match (characters.next(), characters.next()) {
+                (Some(single), None) if single.is_ascii_alphanumeric() => Some(single.to_string()),
+                _ => None,
+            };
+        }
+    }
+
+    // A function key is drawn as it is named. `Escape` is not: the interface
+    // writes the French key cap, which is what is engraved on the keyboard this
+    // application is used on.
+    let is_function_key = name.starts_with('F')
+        && name.len() > 1
+        && name[1..]
+            .chars()
+            .all(|character| character.is_ascii_digit());
+
+    match name.as_str() {
+        "Escape" => Some("Échap".to_owned()),
+        _ if is_function_key => Some(name),
+        _ => None,
+    }
+}
+
+/// Whether this application will offer a combination to the operating system.
+///
+/// # THE frontier for anything that did not come from [`REGISTRY`]
+///
+/// Pure, and pure on purpose: everything a user can type reaches the system
+/// through here, and a decision that needs an event loop is a decision no test
+/// can put a bad combination to. The page validates too (`src/shortcut-recorder.ts`),
+/// and that is not a duplicate - what arrives over IPC is never trusted, and a
+/// second webview, a devtools console or a widened capability would all bypass
+/// the first check.
+///
+/// Four refusals, and the second is the one that matters most:
+///
+/// 1. What the plugin's own parser will not read.
+/// 2. A combination with NO MODIFIER. `Digit2` registered globally would take
+///    that key away from every other application on the machine - the user could
+///    no longer type a `2` anywhere - and Windows would happily allow it.
+/// 3. A modifier outside [`MODIFIERS`], which would be registered and never
+///    drawn.
+/// 4. A key this application has no cap for, which would be registered and drawn
+///    under a name invented on the spot.
+///
+/// The accelerator that comes back is CANONICAL: rebuilt from the parsed
+/// combination in the order of [`MODIFIERS`], never the caller's own spelling.
+/// That is what makes `Shift+Ctrl+2` and `Ctrl+Shift+Digit2` one value rather
+/// than two, and it is also what lets `settings::render` write the file without
+/// escaping anything - a canonical accelerator is ASCII letters, digits and `+`.
+pub fn accept(input: &str) -> Result<Combination, String> {
+    let shortcut = parse(input)?;
+
+    if shortcut.mods.is_empty() {
+        return Err(format!(
+            "`{input}` carries no modifier. Registered globally, that key would be taken from \
+             every other application on this machine"
+        ));
+    }
+
+    let known = MODIFIERS
+        .iter()
+        .fold(Modifiers::empty(), |all, (modifier, _, _)| all | *modifier);
+    if !shortcut.mods.difference(known).is_empty() {
+        return Err(format!(
+            "`{input}` carries a modifier this application does not draw, so it would be \
+             registered and never shown"
+        ));
+    }
+
+    let Some(cap) = cap(shortcut.key) else {
+        return Err(format!(
+            "`{input}` ends on `{}`, a key this application has no cap for. It would be \
+             registered and drawn under a name invented on the spot",
+            shortcut.key
+        ));
+    };
+
+    let mut accelerator = String::new();
+    let mut keys = Vec::new();
+
+    for (modifier, token, label) in MODIFIERS {
+        if shortcut.mods.contains(modifier) {
+            accelerator.push_str(token);
+            accelerator.push('+');
+            keys.push(label.to_owned());
+        }
+    }
+
+    accelerator.push_str(&shortcut.key.to_string());
+    keys.push(cap);
+
+    Ok(Combination { accelerator, keys })
+}
+
+/// One row of the table as the frontend receives it.
+///
+/// The owned twin of [`ShortcutEntry`], and it exists because the capture
+/// combination is no longer a constant: `&'static str` cannot hold a string a
+/// user chose at run time. Field names and their meaning are unchanged, so
+/// `ShortcutEntry` in `src/shortcuts.ts` reads both without knowing which it
+/// got.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutRow {
+    pub id: &'static str,
+    pub accelerator: String,
+    pub keys: Vec<String>,
+    pub description_key: &'static str,
+    pub category: ShortcutCategory,
+}
+
+/// The table as it should be PUBLISHED, given what was offered to the system.
+///
+/// Pure, so the substitution is under test without an event loop. The capture
+/// row carries `capture` when there is one; every other row - and the capture
+/// row on a launch where nothing was ever offered - carries the registry's own
+/// hand-written values, because those are then the only honest thing to show.
+///
+/// Note which combination is passed in by [`describe_shortcuts`]: the one that
+/// was ATTEMPTED, not the one that was accepted. A combination Windows refused
+/// is still the one this application asked for, and the launcher's refusal note
+/// names it - see `src/shortcut-hint.ts`, which compares the accelerator it was
+/// given against this table's before it draws any cap at all.
+pub fn rows(capture: Option<&Combination>) -> Vec<ShortcutRow> {
+    REGISTRY
+        .iter()
+        .map(|entry| {
+            let published = match capture {
+                Some(combination) if entry.id == CAPTURE_REGION => combination.clone(),
+                _ => Combination {
+                    accelerator: entry.accelerator.to_owned(),
+                    keys: entry.keys.iter().map(|key| (*key).to_owned()).collect(),
+                },
+            };
+
+            ShortcutRow {
+                id: entry.id,
+                accelerator: published.accelerator,
+                keys: published.keys,
+                description_key: entry.description_key,
+                category: entry.category,
+            }
+        })
+        .collect()
 }
 
 /// Hands the registry to the frontend.
@@ -143,15 +353,73 @@ pub fn parse(entry: &ShortcutEntry) -> Result<Shortcut, String> {
 /// Nothing is printed, unlike `describe_displays`. That command logs because
 /// the monitor list is discovered at run time and a wrong one explains a wrong
 /// capture; this one would only echo a constant back into the terminal.
+/// Since 6 September 2026 it hands over [`rows`] rather than [`REGISTRY`]
+/// itself, so that the capture row names the combination this launch really
+/// offered the system instead of the one the source ships with. A state that is
+/// not managed at all is not an error here: the table is still true of what this
+/// application intends to hold, and refusing to list any shortcut because the
+/// registration state is missing would take the help page down over a
+/// diagnostic.
 #[tauri::command]
-pub fn describe_shortcuts(webview: Webview) -> Result<Vec<ShortcutEntry>, String> {
+pub fn describe_shortcuts(app: AppHandle, webview: Webview) -> Result<Vec<ShortcutRow>, String> {
     ipc::ensure_from(
         webview.label(),
         ipc::MAIN_WINDOW_LABEL,
         "describe_shortcuts",
     )?;
 
-    Ok(REGISTRY.to_vec())
+    let attempted = app
+        .try_state::<CaptureShortcut>()
+        .and_then(|state| state.attempted());
+
+    Ok(rows(attempted.as_ref()))
+}
+
+/// Changes the combination that starts a capture, at once.
+///
+/// # What "at once" means, and why the alternative was refused
+///
+/// The old combination is released and the new one taken before this returns.
+/// Thierry decided it on 5 September 2026, and the reason is not comfort: a
+/// setting that only took effect after a restart would look, to the person who
+/// just used it, exactly like a setting that did not work - they press the new
+/// keys, nothing happens, and the honest conclusion is that the application is
+/// broken.
+///
+/// # THE ROLLBACK IS THE PART THAT MATTERS
+///
+/// The sequence, its order and every way it can fail live in
+/// [`crate::shortcut::change`], which is pure and takes the registrar as an
+/// argument precisely so that the refusal path is a test rather than a hope. The
+/// promise it keeps: a combination the system refuses leaves the PREVIOUS one
+/// registered, and the answer below says so, naming both.
+///
+/// Nothing is written to disk unless the new combination was really taken. A
+/// file holding a combination Windows refuses would hand the same failure to
+/// every launch afterwards, and the user would have to find the file to get out
+/// of it.
+///
+/// **Main window only**, by capability AND in Rust. This is the widest of the
+/// three shortcut commands by a distance: it takes a global hotkey from the
+/// operating system and writes a file. The veil has no settings screen.
+#[tauri::command]
+pub fn set_capture_shortcut(
+    app: AppHandle,
+    webview: Webview,
+    accelerator: String,
+) -> Result<ShortcutChange, String> {
+    ipc::ensure_from(
+        webview.label(),
+        ipc::MAIN_WINDOW_LABEL,
+        "set_capture_shortcut",
+    )?;
+
+    // Validated HERE, before anything is unregistered. What arrives from a
+    // webview is a string and nothing more; `accept` is the only door onto the
+    // operating system, and its refusals are the four listed on it.
+    let wanted = accept(&accelerator)?;
+
+    crate::shortcut::change_capture_shortcut(&app, &wanted)
 }
 
 /// Hands the frontend what the operating system ANSWERED about the capture
@@ -166,9 +434,12 @@ pub fn describe_shortcuts(webview: Webview) -> Result<Vec<ShortcutEntry>, String
 /// the registry can draw a combination nothing is listening for, which is the
 /// state Cliche shipped in until 6 September 2026.
 ///
-/// The status is read from managed state rather than recomputed: registering a
-/// shortcut is something that happened ONCE, in `setup`, and asking again would
-/// answer about a second registration nobody performed.
+/// The status is read from managed state rather than recomputed: a registration
+/// is something that HAPPENED - in `setup`, or in the last
+/// [`set_capture_shortcut`] - and asking the plugin again would answer about a
+/// registration nobody performed. The state is a mutex since the combination
+/// became settable, so this now reports the LAST answer rather than the first;
+/// `CaptureShortcut` in `shortcut.rs` is where that is kept.
 ///
 /// `try_state` and not `state`, like everything else that runs on a webview IPC
 /// thread: `state` panics when the type was never managed, and an unmanaged
@@ -189,8 +460,8 @@ pub fn describe_shortcut_status(
         "describe_shortcut_status",
     )?;
 
-    app.try_state::<ShortcutStatus>()
-        .map(|managed| managed.inner().clone())
+    app.try_state::<CaptureShortcut>()
+        .map(|managed| managed.status())
         .ok_or_else(|| {
             "no shortcut status is managed, so nothing here knows what the system answered. \
              `setup` in src-tauri/src/lib.rs is what puts it there."
@@ -211,6 +482,17 @@ mod tests {
     /// independently of it. Hence the return of `None` for anything it has not
     /// been taught - a checker that guesses would pass a wrong label through
     /// silently, which is the exact failure it is here to catch.
+    ///
+    /// # DO NOT REPLACE THIS WITH A CALL TO [`cap`]
+    ///
+    /// Production grew its own copy of this rule on 6 September 2026, because a
+    /// combination the USER chose has no hand-written row to read a cap from.
+    /// The two are deliberately separate statements of one rule, and the
+    /// registry's hand-written `keys` is what both are held against - this one
+    /// by `the_displayed_keys_are_the_combination_that_is_actually_registered`,
+    /// `cap` by `the_derived_caps_agree_with_the_hand_written_registry_row`.
+    /// Calling `cap` here would make the first of those compare a derivation
+    /// with itself, and it would pass for ever.
     ///
     /// `Code` prints its W3C name (`keyboard-types-0.7.0/src/code.rs:465`), so
     /// the two families that matter can be derived from it rather than listed
@@ -318,7 +600,7 @@ mod tests {
         let mut seen = HashSet::new();
 
         for candidate in REGISTRY {
-            let shortcut = parse(candidate).expect("every entry must parse");
+            let shortcut = parse(candidate.accelerator).expect("every entry must parse");
 
             assert!(
                 seen.insert(shortcut),
@@ -351,7 +633,7 @@ mod tests {
         // Held against the parser that will have to register them. A typo fails
         // here rather than at run time, in a message nobody is watching for.
         for candidate in REGISTRY {
-            if let Err(reason) = parse(candidate) {
+            if let Err(reason) = parse(candidate.accelerator) {
                 panic!("`{}` does not parse: {reason}", candidate.id);
             }
         }
@@ -380,7 +662,7 @@ mod tests {
         // fields forces them to agree, so they are compared - the drawn chips
         // against a list rebuilt from the parsed combination.
         for candidate in REGISTRY {
-            let shortcut = parse(candidate).expect("every entry must parse");
+            let shortcut = parse(candidate.accelerator).expect("every entry must parse");
 
             let expected = expected_keys(&shortcut).unwrap_or_else(|| {
                 panic!(
@@ -473,5 +755,213 @@ mod tests {
             "the registry grew past what `shortcut::install` binds. Give the new entry a \
              handler there, then update this count."
         );
+    }
+
+    // --- the settable combination -------------------------------------------
+
+    #[test]
+    fn the_derived_caps_agree_with_the_hand_written_registry_row() {
+        // What ties `cap` to something nobody derived. The registry states its
+        // caps BY HAND (`keys: &["Ctrl", "Maj", "2"]`), and production now has
+        // to produce the same list for a combination a user typed. If the two
+        // ever disagree, one of the two screens is lying about which keys to
+        // press - and the one that lies is whichever the reader is looking at.
+        for candidate in REGISTRY {
+            let derived = accept(candidate.accelerator)
+                .unwrap_or_else(|reason| panic!("`{}` must be acceptable: {reason}", candidate.id));
+
+            assert_eq!(
+                derived.keys, candidate.keys,
+                "`{}` is drawn {:?} by hand and {:?} by `accept`",
+                candidate.id, candidate.keys, derived.keys
+            );
+        }
+    }
+
+    #[test]
+    fn an_accepted_combination_is_canonical_and_parses_back() {
+        // THE property `settings.rs` leans on: what `accept` hands back is
+        // written to disk as it stands, and read again at the next launch. A
+        // canonical form the parser could not read back would lose the user's
+        // shortcut on the FIRST restart, silently, with the registry's own
+        // combination taking its place.
+        for (typed, canonical) in [
+            ("Shift+Ctrl+Digit2", "Ctrl+Shift+Digit2"),
+            ("ctrl+shift+KeyA", "Ctrl+Shift+KeyA"),
+            ("Alt+Ctrl+F5", "Ctrl+Alt+F5"),
+        ] {
+            let accepted = accept(typed).unwrap_or_else(|reason| panic!("`{typed}`: {reason}"));
+
+            assert_eq!(
+                accepted.accelerator, canonical,
+                "`{typed}` was not brought to the one spelling this application stores"
+            );
+            assert!(
+                parse(&accepted.accelerator).is_ok(),
+                "`{}` is a spelling this application's own parser refuses",
+                accepted.accelerator
+            );
+            assert_eq!(
+                accept(&accepted.accelerator).map(|again| again.accelerator),
+                Ok(accepted.accelerator.clone()),
+                "a canonical accelerator must survive a second pass unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn a_canonical_accelerator_can_be_written_to_the_settings_file_unescaped() {
+        // `settings::render` escapes nothing and refuses a quote or a backslash.
+        // This is the other half of that decision: what `accept` produces can
+        // only ever be ASCII letters, digits and `+`.
+        for typed in ["Ctrl+Shift+Digit2", "Ctrl+Alt+Shift+Super+F12", "Ctrl+KeyZ"] {
+            let accepted = accept(typed).unwrap_or_else(|reason| panic!("`{typed}`: {reason}"));
+
+            assert!(
+                accepted
+                    .accelerator
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '+'),
+                "`{}` holds something `settings::render` would refuse to write",
+                accepted.accelerator
+            );
+            assert!(
+                crate::settings::render(&accepted.accelerator).is_ok(),
+                "`{}` cannot be written down, so choosing it would not survive a restart",
+                accepted.accelerator
+            );
+        }
+    }
+
+    #[test]
+    fn a_combination_with_no_modifier_is_refused() {
+        // THE dangerous one. `Digit2` registered globally takes that key from
+        // every other application on the machine: the user can no longer type a
+        // `2` anywhere, in any program, and the only way out is this
+        // application's own settings screen. Windows does not stop it.
+        for bare in ["Digit2", "KeyA", "F5", "Escape"] {
+            let refusal = accept(bare)
+                .expect_err("a combination with no modifier must never reach the operating system");
+
+            assert!(
+                refusal.contains(bare),
+                "the refusal names no combination: {refusal}"
+            );
+            assert!(
+                refusal.contains("modifier"),
+                "the refusal must say WHAT is missing, or nobody can act on it: {refusal}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_key_with_no_cap_is_refused_rather_than_drawn_under_an_invented_name() {
+        // The other half of `cap` returning `None`. Registering a key the
+        // interface cannot name would put a shortcut in the help page under a
+        // label somebody made up at the call site.
+        let refusal = accept("Ctrl+Shift+MediaPlayPause")
+            .expect_err("a key this application cannot draw must not be registered");
+
+        assert!(refusal.contains("MediaPlayPause"), "{refusal}");
+    }
+
+    #[test]
+    fn nonsense_never_reaches_the_operating_system() {
+        // Without this the four refusals above could be green over an `accept`
+        // that says no to everything, and the ones below could be green over an
+        // `accept` that says yes to everything.
+        for nonsense in ["", "Ctrl+", "Ctrl+Shift", "NotAKey", "Ctrl+Shift+NotAKey"] {
+            assert!(
+                accept(nonsense).is_err(),
+                "`{nonsense}` was accepted as a combination"
+            );
+        }
+        for real in ["Ctrl+Shift+Digit2", "Ctrl+Alt+KeyQ", "Ctrl+Shift+F1"] {
+            assert!(
+                accept(real).is_ok(),
+                "`{real}` was refused, so this application can register nothing at all"
+            );
+        }
+    }
+
+    #[test]
+    fn the_published_table_names_the_combination_that_was_offered() {
+        // THE substitution the help page and the launcher both read. Without
+        // it, changing the shortcut would leave every screen announcing the
+        // combination the source ships with - the user presses the keys they
+        // just chose and the application tells them to press other ones.
+        let chosen = accept("Ctrl+Alt+KeyQ").expect("the combination under test must be valid");
+        let published = rows(Some(&chosen));
+
+        let capture = published
+            .iter()
+            .find(|row| row.id == CAPTURE_REGION)
+            .expect("the capture row must survive the substitution");
+
+        assert_eq!(capture.accelerator, chosen.accelerator);
+        assert_eq!(capture.keys, chosen.keys);
+        assert_eq!(
+            published.len(),
+            REGISTRY.len(),
+            "the substitution dropped or invented a row"
+        );
+
+        // Everything that is NOT the combination stays the registry's: an entry
+        // is more than its keys, and a row that lost its description key would
+        // draw a blank line in the help page.
+        let entry = entry(CAPTURE_REGION).expect("the registry must hold the capture entry");
+        assert_eq!(capture.description_key, entry.description_key);
+        assert_eq!(capture.category, entry.category);
+    }
+
+    #[test]
+    fn the_veil_window_cannot_rebind_the_capture_shortcut() {
+        // The Rust half of the guard, held at the only place a test can reach
+        // it: constructing a `Webview` needs a running event loop, a label does
+        // not. The ACL says the same thing a second time, and `ipc.rs` puts THAT
+        // question to the shipped `RuntimeAuthority`.
+        let refusal = ipc::ensure_from(
+            crate::veil::VEIL_WINDOW_LABEL,
+            ipc::MAIN_WINDOW_LABEL,
+            "set_capture_shortcut",
+        )
+        .expect_err("the veil must not be able to rebind the shortcut that raised it");
+
+        assert!(refusal.contains("set_capture_shortcut"), "{refusal}");
+        assert!(
+            refusal.contains(crate::veil::VEIL_WINDOW_LABEL),
+            "{refusal}"
+        );
+        assert!(refusal.contains(ipc::MAIN_WINDOW_LABEL), "{refusal}");
+        assert!(
+            refusal.contains("REFUSED"),
+            "the line must say the call did not happen: {refusal}"
+        );
+        assert!(
+            ipc::ensure_from(
+                ipc::MAIN_WINDOW_LABEL,
+                ipc::MAIN_WINDOW_LABEL,
+                "set_capture_shortcut"
+            )
+            .is_ok(),
+            "the settings screen is in the main window; refusing it there would leave the \
+             recorder as mute as it was before"
+        );
+    }
+
+    #[test]
+    fn a_launch_that_offered_nothing_publishes_the_registrys_own_row() {
+        // The other row of the same rule. When nothing was ever offered to the
+        // system there is no combination to substitute, and the table this
+        // application SHIPS with is then the only honest thing to show.
+        let published = rows(None);
+        let capture = published
+            .iter()
+            .find(|row| row.id == CAPTURE_REGION)
+            .expect("the capture row must exist whatever happened at startup");
+        let entry = entry(CAPTURE_REGION).expect("the registry must hold the capture entry");
+
+        assert_eq!(capture.accelerator, entry.accelerator);
+        assert_eq!(capture.keys, entry.keys);
     }
 }

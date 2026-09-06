@@ -9,6 +9,7 @@ mod displays;
 pub mod geometry;
 pub mod ipc;
 mod launch;
+mod settings;
 mod shortcut;
 mod shortcuts;
 pub mod timing;
@@ -16,9 +17,10 @@ pub mod veil;
 
 pub use displays::{collect_displays, describe_displays, summarize, DisplayInfo};
 pub use launch::capture_region;
-pub use shortcut::ShortcutStatus;
+pub use shortcut::{CaptureShortcut, ShortcutChange, ShortcutStatus};
 pub use shortcuts::{
-    describe_shortcut_status, describe_shortcuts, ShortcutCategory, ShortcutEntry, REGISTRY,
+    describe_shortcut_status, describe_shortcuts, set_capture_shortcut, Combination,
+    ShortcutCategory, ShortcutEntry, ShortcutRow, REGISTRY,
 };
 
 use displays::print_displays;
@@ -67,6 +69,7 @@ pub fn run() {
             displays::describe_displays,
             shortcuts::describe_shortcuts,
             shortcuts::describe_shortcut_status,
+            shortcuts::set_capture_shortcut,
             launch::capture_region,
             veil::veil_ready,
             veil::veil_decoded,
@@ -138,11 +141,26 @@ pub fn run() {
             // so `describe_shortcut_status` can hand the launcher what actually
             // happened instead of leaving it to say the registry could not be
             // read - a sentence that was false in every one of the three cases.
-            let registration = shortcut::install(app.handle());
-            if let Some(line) = registration.terminal_line() {
+            //
+            // WHICH combination is offered is read from disk first. The same
+            // rule applies one level up and it is the reason `settings::read`
+            // returns an answer rather than a `Result`: a settings file that is
+            // missing, unreadable or incoherent must not stop the application
+            // either. It falls back to the registry's own combination and says
+            // so, on the line `installed.note` carries.
+            let saved = settings::read(app.handle());
+            let installed = shortcut::install(app.handle(), &saved);
+            if let Some(note) = &installed.note {
+                eprintln!("{note}");
+            }
+            if let Some(line) = installed.status.terminal_line() {
                 eprintln!("{line}");
             }
-            app.manage(registration);
+            app.manage(shortcut::CaptureShortcut::new(
+                installed.status,
+                installed.attempted,
+                installed.plugin_loaded,
+            ));
 
             // Measuring without touching the keyboard. `CLICHE_BENCH=20` runs
             // the very same `perform_capture` the shortcut calls; read

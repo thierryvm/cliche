@@ -84,6 +84,10 @@ type TitleBarProps = {
   readonly helpOpen: boolean;
   /** Asked to swap between the launcher and the help. */
   readonly onToggleHelp: () => void;
+  /** Whether the settings screen is the one on show. Drawn as `aria-pressed`. */
+  readonly settingsOpen: boolean;
+  /** Asked to swap between the launcher and the settings. */
+  readonly onToggleSettings: () => void;
 };
 
 /**
@@ -105,8 +109,22 @@ type TitleBarProps = {
  * It carries no `data-tauri-drag-region`, which is what stops Tauri's own drag
  * script from treating it as a handle - the same rule the three window controls
  * rely on, read in `tauri-2.11.5/src/window/scripts/drag.js:57-58`.
+ *
+ * # AND SO IS THE SETTINGS CONTROL, added the same day
+ *
+ * Same shape, same toggle, and the same reason: `#/reglages` is a screen with no
+ * other way in. The two application controls come FIRST and the three window
+ * controls last, which is also the tab order - what this window DOES before
+ * what is done TO this window - and it leaves the close button at the end,
+ * where a hand looking for it already goes.
  */
-export default function TitleBar({ title, helpOpen, onToggleHelp }: TitleBarProps) {
+export default function TitleBar({
+  title,
+  helpOpen,
+  onToggleHelp,
+  settingsOpen,
+  onToggleSettings,
+}: TitleBarProps) {
   // Starts at `false` and is corrected by the first probe below. The starting
   // value is a guess and is treated as one - it is why the effect probes on
   // mount rather than only on the first resize.
@@ -162,6 +180,15 @@ export default function TitleBar({ title, helpOpen, onToggleHelp }: TitleBarProp
           onClick={onToggleHelp}
         >
           <Glyph d={ICON.info} />
+        </button>
+        <button
+          type="button"
+          className="c-btn c-btn--ghost c-btn--icon c-winbtn"
+          aria-label={UI_STRINGS.settingsTitle}
+          aria-pressed={settingsOpen}
+          onClick={onToggleSettings}
+        >
+          <Glyph d={ICON.settings} />
         </button>
         <button
           type="button"

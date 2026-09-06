@@ -79,13 +79,36 @@ export const UI_STRINGS = {
   dismissMessage: 'Fermer le message',
   failure: 'Échec',
 
-  /* Settings: the shortcut recorder. */
+  /* Settings: the shortcut recorder.
+
+     `settingsTitle` NAMES THE SCREEN, and it is here for the reason `helpTitle`
+     below is: a catalogue may not invent a word the system does not draw, so
+     the showcase published « Réglages » as a `c-screen__name` first, next to the
+     recorder it belongs to. Same method Thierry settled on that morning for
+     « Aide ». */
+  settingsTitle: 'Réglages',
   shortcutFieldLabel: 'Raccourci de capture',
   shortcutChange: 'Modifier',
   shortcutListening: 'Appuyez sur une combinaison…',
   shortcutEscapeCancels: 'Échap annule.',
   shortcutUnavailable: 'Indisponible',
   shortcutRegistryUnreadable: "Le registre des raccourcis n'a pas pu être lu.",
+
+  /* What the recorder says once the system has answered. Catalogued in PIECES,
+     for the reason the header amends: each of these is one node of a sentence
+     whose other nodes are combinations this application measured, and a
+     sentence stored whole would be a sentence holding a combination nobody can
+     translate. Kept each on ONE line - `scripts/check-strings.mjs` reads one
+     pair per line. */
+  shortcutAlreadyTaken: 'est déjà pris par une autre application.',
+  shortcutPreviousStillActive: 'reste actif.',
+  shortcutNoneActive: "Aucun raccourci n'est actif. Choisissez-en un autre.",
+  shortcutNotSaved: "Le raccourci fonctionne, mais le réglage n'a pas pu être écrit : il ne survivra pas au redémarrage.",
+  /* The two presses this application refuses on its own, before Windows is
+     asked. The first is the dangerous one: a bare key registered globally is
+     taken from every other application on the machine. */
+  shortcutNeedsModifier: 'Une touche seule serait prise à toutes les autres applications. Ajoutez un modificateur.',
+  shortcutKeyUnsupported: 'Cette touche ne peut pas servir de raccourci. Essayez une lettre, un chiffre ou une touche de fonction.',
 
   /* Help: the headings, and what each registered shortcut DOES.
      `captureRegion` above is one of these too - it is the launcher tile and the
@@ -102,6 +125,29 @@ export const UI_STRINGS = {
   helpCategoryCapture: 'Capture',
   dismissVeil: 'Fermer le voile sans capturer',
   captureWindowUnderPointer: 'Capturer la fenêtre sous le pointeur',
+
+  /* Help: the diagnostic read-out under the key map.
+
+     IT SPOKE ENGLISH UNTIL 6 SEPTEMBER 2026, and the reason is worth keeping:
+     it was the whole of the old debug screen, and it kept its wording when it
+     became a section of the help page. `DisplaysProbe.tsx`'s own header used to
+     argue that an engineering read-out is not interface prose - which is true
+     of a screen nobody but a developer opens, and stopped being true the day it
+     landed inside the help, in French, under a French heading. What it says
+     about the machine is now French like everything else around it.
+
+     The one thing that is NOT catalogued is the message the system itself
+     returns on a failure. That is a quotation - `xcap`'s own words - and
+     translating a quotation is inventing one. */
+  displaysHeading: 'Écrans détectés au démarrage',
+  displaysReading: 'Lecture de la liste des écrans…',
+  displaysUnreadable: "la liste des écrans n'a pas pu être lue :",
+  displayOne: 'écran',
+  displayMany: 'écrans',
+  displayUnnamed: '(sans nom)',
+  displayPhysicalPixels: 'px physiques',
+  displayOrigin: 'origine',
+  displayScale: 'échelle',
 } as const;
 
 /**

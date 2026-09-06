@@ -71,4 +71,12 @@ export const ICON = {
 
   /* Direction, not ornament: it points where the control goes. */
   back: 'M14 6l-6 6 6 6',
+
+  /* The way into the settings screen, added 6 September 2026 with it.
+     Two sliders and not a cog: what that screen holds is a VALUE somebody
+     moves, and a cog is the icon of a machine being serviced. The geometry is
+     as plain as the window controls above, and for the same reason — this one
+     sits in the title bar, next to them, and anything characterful there reads
+     as the wrong button. */
+  settings: 'M4 8h9M17 8h3M15 5.5v5M4 16h3M11 16h9M9 13.5v5',
 } as const;

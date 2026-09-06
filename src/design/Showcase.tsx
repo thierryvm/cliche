@@ -555,6 +555,13 @@ export default function Showcase() {
         {/* ---------------------------------------------------------- */}
         <Section id="s-recorder" label="V1 · réglages — le raccourci de capture, réglable">
           <div className="c-panel">
+            {/* The screen's NAME, published here on 6 September 2026 for the
+                same reason « Aide » was that morning: the catalogue may not
+                invent a word the system does not draw, and the recorder had a
+                section label in this page but no name for the SCREEN it lives
+                on. Same class the launcher uses for « Capturer ». */}
+            <h2 className="c-screen__name">Réglages</h2>
+
             <div className="c-specimens">
               <Specimen caption="repos · la combinaison en place">
                 <div className="c-field">
@@ -635,6 +642,110 @@ export default function Showcase() {
                   </button>
                 </div>
               </Specimen>
+
+              {/* ---- les quatre réponses de Windows, ajoutées le 6 septembre
+                  2026 avec le réglage réel. Le specimen « conflit » ci-dessus
+                  disait qu'une combinaison peut être refusée ; aucun ne disait
+                  CE QU'IL RESTE au moment où elle l'est. C'est la seule chose
+                  que l'utilisateur ait à savoir. ---- */}
+
+              <Specimen caption="refusé · l'ancienne combinaison a été REPRISE — le champ montre celle qui répond, le message nomme les deux">
+                <div className="c-field">
+                  <span className="c-field__label">Raccourci de capture</span>
+                  <button
+                    type="button"
+                    className="c-btn c-btn--secondary c-recorder"
+                    aria-invalid="true"
+                    aria-describedby="rec-kept"
+                  >
+                    <Keys keys={CAPTURE_KEYS} />
+                    <span>Modifier</span>
+                  </button>
+                  <span className="c-field__message c-field__message--error" id="rec-kept">
+                    <Glyph d={ICON.alert} />
+                    Ctrl + Maj + A est déjà pris par une autre application. Ctrl + Maj + 2
+                    reste actif.
+                  </span>
+                </div>
+              </Specimen>
+
+              <Specimen caption="refusé, et l'ancienne n'est pas revenue non plus · le seul état où rien ne répond">
+                <div className="c-field">
+                  <span className="c-field__label">Raccourci de capture</span>
+                  <button
+                    type="button"
+                    className="c-btn c-btn--secondary c-recorder"
+                    aria-invalid="true"
+                    aria-describedby="rec-none"
+                  >
+                    <span>Indisponible</span>
+                  </button>
+                  <span className="c-field__message c-field__message--error" id="rec-none">
+                    <Glyph d={ICON.alert} />
+                    Ctrl + Maj + A est déjà pris par une autre application. Aucun raccourci
+                    n&apos;est actif. Choisissez-en un autre.
+                  </span>
+                </div>
+              </Specimen>
+
+              <Specimen caption="pris, mais pas écrit · le raccourci marche AUJOURD'HUI — ne rien dire serait le laisser disparaître au prochain lancement">
+                <div className="c-field">
+                  <span className="c-field__label">Raccourci de capture</span>
+                  <button
+                    type="button"
+                    className="c-btn c-btn--secondary c-recorder"
+                    aria-describedby="rec-unsaved"
+                  >
+                    <Keys keys={['Ctrl', 'Maj', 'A']} />
+                    <span>Modifier</span>
+                  </button>
+                  <span className="c-field__message c-field__message--error" id="rec-unsaved">
+                    <Glyph d={ICON.alert} />
+                    Le raccourci fonctionne, mais le réglage n&apos;a pas pu être écrit : il ne
+                    survivra pas au redémarrage.
+                  </span>
+                </div>
+              </Specimen>
+
+              <Specimen caption="touche seule · refusée AVANT que Windows soit sollicité">
+                <div className="c-field">
+                  <span className="c-field__label">Raccourci de capture</span>
+                  <button
+                    type="button"
+                    className="c-btn c-btn--secondary c-recorder"
+                    aria-pressed="true"
+                    aria-invalid="true"
+                    aria-describedby="rec-bare"
+                  >
+                    <span>Appuyez sur une combinaison…</span>
+                  </button>
+                  <span className="c-field__message c-field__message--error" id="rec-bare">
+                    <Glyph d={ICON.alert} />
+                    Une touche seule serait prise à toutes les autres applications. Ajoutez un
+                    modificateur.
+                  </span>
+                </div>
+              </Specimen>
+
+              <Specimen caption="touche impossible à dessiner · même refus, autre cause">
+                <div className="c-field">
+                  <span className="c-field__label">Raccourci de capture</span>
+                  <button
+                    type="button"
+                    className="c-btn c-btn--secondary c-recorder"
+                    aria-pressed="true"
+                    aria-invalid="true"
+                    aria-describedby="rec-nokey"
+                  >
+                    <span>Appuyez sur une combinaison…</span>
+                  </button>
+                  <span className="c-field__message c-field__message--error" id="rec-nokey">
+                    <Glyph d={ICON.alert} />
+                    Cette touche ne peut pas servir de raccourci. Essayez une lettre, un chiffre
+                    ou une touche de fonction.
+                  </span>
+                </div>
+              </Specimen>
             </div>
 
             <p className="c-caption" style={{ marginBlockStart: 'var(--space-4)' }}>
@@ -703,6 +814,95 @@ export default function Showcase() {
             <li>
               Une combinaison refusée s&apos;explique sur sa propre ligne, en travers des deux
               colonnes — PRD R4 : jamais d&apos;échec silencieux, et la combinaison est nommée.
+            </li>
+          </ul>
+        </Section>
+
+        {/* ---------------------------------------------------------- */}
+        <Section
+          id="s-diagnostic"
+          label="V1 · aide — le diagnostic, dans la langue de la page qui le porte"
+        >
+          <div className="c-panel c-stack">
+            {/* AJOUTÉE LE 6 SEPTEMBRE 2026. Ce relevé existait déjà à l'écran,
+                en anglais : c'était tout l'ancien écran de debug, et il a gardé
+                ses phrases en devenant une section de l'aide. Une section
+                anglaise sous un titre français n'est pas un relevé technique,
+                c'est une page à moitié traduite. Les mots sont donc décidés ici,
+                comme tous les autres, avant d'entrer au catalogue.
+
+                Le message BRUT du système reste tel quel : c'est une citation,
+                et traduire une citation, c'est en inventer une. */}
+            <Specimen caption="prêt · le relevé tel que la page d'aide le porte, sous le registre des raccourcis" wide>
+              <section>
+                <h3 className="c-section__label">Écrans détectés au démarrage</h3>
+                <p>2 écrans</p>
+                <ul className="displays">
+                  <li className="display">
+                    <span className="display-name">\\.\DISPLAY1</span>
+                    <span className="display-facts">
+                      2560×1440 px physiques · origine (0, 0) · échelle 1.5
+                    </span>
+                  </li>
+                  <li className="display">
+                    <span className="display-name">(sans nom)</span>
+                    <span className="display-facts">
+                      1920×1080 px physiques · origine (2560, 120) · échelle 1
+                    </span>
+                  </li>
+                </ul>
+              </section>
+            </Specimen>
+
+            <Specimen caption="un seul écran · le singulier est une décision, pas un « (s) »" wide>
+              <section>
+                <h3 className="c-section__label">Écrans détectés au démarrage</h3>
+                <p>1 écran</p>
+              </section>
+            </Specimen>
+
+            <Specimen caption="lecture en cours · role=status, la phrase dit ce qu'on attend" wide>
+              <section>
+                <h3 className="c-section__label">Écrans détectés au démarrage</h3>
+                <p>Lecture de la liste des écrans…</p>
+              </section>
+            </Specimen>
+
+            <Specimen
+              caption="échec · .c-note--danger, le mot « Échec » et le glyphe portent l'état (PRD A4). La citation du système reste dans sa langue."
+              wide
+            >
+              <section>
+                <h3 className="c-section__label">Écrans détectés au démarrage</h3>
+                <div className="c-note c-note--danger" role="alert">
+                  <Glyph d={ICON.alert} />
+                  <span>
+                    <strong>Échec</strong> — la liste des écrans n&apos;a pas pu être lue :
+                    xcap: no monitor found
+                  </span>
+                </div>
+              </section>
+            </Specimen>
+          </div>
+
+          <ul className="c-rules" style={{ marginBlockStart: 'var(--space-4)' }}>
+            <li>
+              <strong>Rien de neuf dans le matériau</strong> : ce sont{' '}
+              <code>.displays</code>, <code>.display-name</code> et{' '}
+              <code>.display-facts</code>, déjà déclarés dans <code>styles.css</code>, plus le{' '}
+              <code>.c-note--danger</code> que cette page publie depuis le début. Seuls les mots
+              changent.
+            </li>
+            <li>
+              Le singulier et le pluriel sont <strong>deux libellés</strong>, pas un{' '}
+              <code>écran(s)</code>. Une parenthèse dans une interface est une phrase que
+              personne n&apos;a fini d&apos;écrire.
+            </li>
+            <li>
+              <code>px physiques</code> n&apos;est pas une précision d&apos;ingénieur : la
+              géométrie de capture se calcule en pixels physiques, et la même fenêtre affiche
+              une autre taille selon la mise à l&apos;échelle de Windows. Le mot lève cette
+              ambiguïté-là, pas une autre.
             </li>
           </ul>
         </Section>

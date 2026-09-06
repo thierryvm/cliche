@@ -335,6 +335,24 @@ mod tests {
             "the veil draws no shortcut reminder; same rule as its neighbour above"
         );
 
+        // ADDED ON 6 SEPTEMBER 2026 with the settings screen, and the widest of
+        // the three shortcut commands by a distance: the two above READ, this
+        // one takes a global hotkey away from the operating system and writes a
+        // file. Ungranted, the recorder is a control that looks armed and
+        // reaches nothing - refused at run time, in release, with the message
+        // sent to a page nobody reads.
+        assert!(
+            granted(&mut context, "set_capture_shortcut", MAIN_WINDOW_LABEL),
+            "`set_capture_shortcut` is invoked from src/Settings.tsx, in the \
+             `{MAIN_WINDOW_LABEL}` window; without it no combination can ever be changed"
+        );
+        assert!(
+            !granted(&mut context, "set_capture_shortcut", VEIL_WINDOW_LABEL),
+            "`set_capture_shortcut` must NOT reach `{VEIL_WINDOW_LABEL}`: that window is a \
+             full-screen sheet raised BY the capture shortcut, and rebinding the combination \
+             that produced it is not a thing anyone needs from there"
+        );
+
         // ADDED ON 6 SEPTEMBER 2026, and the widest grant the main window
         // holds: this one photographs the primary screen and raises a
         // full-screen always-on-top sheet. The half that matters most is the
