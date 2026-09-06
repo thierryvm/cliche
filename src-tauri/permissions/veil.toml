@@ -62,6 +62,11 @@ description = "Lets the veil window hand back the rectangle the user dragged. Th
 commands.allow = ["veil_selected"]
 
 [[permission]]
+identifier = "allow-veil-confirmed"
+description = "Lets the veil window say that the confirmation it showed after a successful copy has had its time, so the veil can be taken down. Added 5 September 2026, when a successful capture stopped hiding the window on the spot. Granting it to another window would hand that window the ability to take the veil away in the middle of somebody's drag; the run number is checked in Rust as well, so a confirmation belonging to an older capture cannot close a newer one."
+commands.allow = ["veil_confirmed"]
+
+[[permission]]
 identifier = "allow-veil-dismissed"
 description = "Lets the veil window cancel a capture, releasing the frozen frame without copying anything."
 commands.allow = ["veil_dismissed"]

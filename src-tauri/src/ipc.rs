@@ -205,20 +205,26 @@ mod tests {
         // asking Rust to cut the frozen screen into the clipboard.
         //
         // `veil_decoded` joined the list on 4 September 2026 and is the second
-        // worst of the five to leave open: it is what makes the veil window
+        // worst of the six to leave open: it is what makes the veil window
         // VISIBLE. Called from `main` it would raise a full-screen, always-on-top
         // sheet over the user's desktop with no capture behind it - and, being
         // the only route to `show()` outside the fallback timer, with nothing
         // else to take it back down but Escape.
         //
         // `veil_ready` joined it later the same day and is the least dangerous
-        // of the five: it prints one line and touches nothing. It is guarded all
+        // of the six: it prints one line and touches nothing. It is guarded all
         // the same, because that line is the whole evidence the cold-start
         // diagnosis rests on, and evidence any window may write into the report
         // is not evidence.
+        //
+        // `veil_confirmed` joined on 5 September 2026 and is the third worst:
+        // it takes the veil DOWN. Called from `main` in a loop it would close
+        // the window under every drag the user starts, and Cliche would look as
+        // though the shortcut simply did nothing.
         for command in [
             "veil_painted",
             "veil_selected",
+            "veil_confirmed",
             "veil_dismissed",
             "veil_decoded",
             "veil_ready",
@@ -275,6 +281,7 @@ mod tests {
         for command in [
             "veil_painted",
             "veil_selected",
+            "veil_confirmed",
             "veil_dismissed",
             "veil_decoded",
             "veil_ready",

@@ -68,6 +68,13 @@ export const UI_STRINGS = {
   windowRestore: 'Restaurer',
   windowClose: 'Fermer',
 
+  /* The confirmation that follows a capture, and the failure that replaces it.
+     `copied` is ONE WORD on purpose: the showcase writes
+     `<span class="c-num">933×577</span> copié`, so the sentence is a figure the
+     application measures followed by this label. Storing it whole would mean
+     storing a dimension nobody can translate. */
+  copied: 'copié',
+
   /* Messages that do not fade on their own need a way out. */
   dismissMessage: 'Fermer le message',
   failure: 'Échec',

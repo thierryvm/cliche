@@ -97,7 +97,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, PhysicalSize, Webview, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Manager, PhysicalPosition, PhysicalSize, Webview, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
 };
 
 use crate::capture::{self, Frame, MARK_CAPTURE};
@@ -418,6 +419,104 @@ fn may_show(current_run: u64, already_shown: u64, run: u64) -> bool {
     run != 0 && run == current_run && run > already_shown
 }
 
+/// What the veil becomes once a selection has been judged. Added 5 September
+/// 2026 with the confirmation.
+///
+/// # The two outcomes are NOT symmetrical, and that is the whole of it
+///
+/// - **The copy worked.** The capture is over. The veil steps out of the way:
+///   the page turns transparent, this window stops answering the pointer, and a
+///   `.c-toast--transient` confirmation names the size for `--dur-toast-dwell`
+///   before [`veil_confirmed`] takes the window down.
+/// - **The copy did not happen.** The veil stays exactly where it is, and above
+///   all it KEEPS THE POINTER. The failure toast is a `.c-note--danger`
+///   carrying a 44 px `.c-toast__dismiss` button; a click-through window would
+///   put that button behind glass - a message that names what went wrong and
+///   offers a control nobody can reach. It is also what lets a refused
+///   selection be corrected rather than redrawn.
+///
+/// # Why a value, rather than the shape of an `if`
+///
+/// Same reason as [`may_show`]: `set_ignore_cursor_events` needs a window and
+/// an event loop, and neither exists in a test binary. A decision over one
+/// boolean can be put to both of its rows. Written a second time in TypeScript
+/// by `planFor` in `src/veil/confirmation.ts`, which decides the same thing for
+/// the DOM half - deliberately, so the day the two disagree is a signal rather
+/// than a coincidence to reconcile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterSelection {
+    /// The bytes are on the clipboard; the veil is showing the confirmation.
+    Confirming,
+    /// Nothing was copied; the veil is showing the refusal and stays usable.
+    StayingUp,
+}
+
+impl AfterSelection {
+    /// The decision, from whether the clipboard took the image.
+    pub fn of(copied: bool) -> Self {
+        if copied {
+            Self::Confirming
+        } else {
+            Self::StayingUp
+        }
+    }
+
+    /// Whether the window stops answering the pointer.
+    pub fn click_through(self) -> bool {
+        matches!(self, Self::Confirming)
+    }
+}
+
+/// What [`veil_selected`] hands back to the page when the copy worked.
+///
+/// PHYSICAL pixels, the same figures `clipboard::success_line` prints on the
+/// terminal: the confirmation says `933×577 copié`, and the two must be the
+/// same measurement or the terminal and the screen would disagree about the
+/// same capture. Not the CSS rectangle the page sent - that one is smaller than
+/// what was cut on any screen above 100 %.
+///
+/// The page does not trust these two numbers on arrival: they cross an IPC
+/// frontier, so `sizeLabel` in `src/veil/confirmation.ts` validates them and
+/// falls back to naming no figure at all rather than to printing whatever
+/// arrived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct CopiedSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Takes the veil down, handing the pointer back on the way.
+///
+/// # Every hide in this module goes through here, and that is the point
+///
+/// `set_ignore_cursor_events(true)` is set in exactly ONE place - a successful
+/// copy, see [`AfterSelection`] - and cleared in exactly one: this function.
+/// The pairing is what keeps the NEXT capture usable. A veil left ignoring the
+/// pointer would show the frozen screen and refuse every drag on it, with
+/// nothing on the terminal to say why.
+///
+/// It is cleared BEFORE the window is hidden rather than after, so that a
+/// `hide()` that fails still leaves a window the user can act on.
+///
+/// **Nothing here is inside the 150 ms budget.** Every caller runs when a
+/// capture ENDS: the user's selection, Escape, a failed `eval`, or the
+/// benchmark's own teardown between runs - which is followed by
+/// [`BENCH_SETTLE`] before the next run is even started.
+///
+/// `why` is named in both failure lines: a hide that did not happen is worth
+/// nothing to a reader who cannot tell which capture it belonged to.
+fn hide_veil(window: &WebviewWindow, why: &str) {
+    if let Err(error) = window.set_ignore_cursor_events(false) {
+        eprintln!(
+            "[cliche] veil: could not take the pointer back before hiding after {why}: {error}. \
+             The NEXT capture may refuse every drag on it"
+        );
+    }
+    if let Err(error) = window.hide() {
+        eprintln!("[cliche] veil: could not hide the veil after {why}: {error}");
+    }
+}
+
 /// Builds the veil window, HIDDEN, sized to the primary monitor.
 ///
 /// Called from `setup()`. Returns the line to print on failure rather than
@@ -434,6 +533,33 @@ pub fn create(app: &AppHandle) -> Result<(), String> {
             .skip_taskbar(true)
             .shadow(false)
             .always_on_top(true)
+            // TRANSPARENT, since 5 September 2026, and this line is NOT free -
+            // read the second half before treating it as one more flag.
+            //
+            // WHY IT IS NEEDED. After a successful copy the veil stops showing
+            // the frozen screen and shows only the confirmation, so that the
+            // user sees the desktop they just captured rather than a picture of
+            // it. `background: transparent` on the page alone cannot do that:
+            // without this flag the window has an opaque backdrop of its own,
+            // and "transparent" would paint a full-screen rectangle of the
+            // window's background colour instead of the desktop.
+            //
+            // WHAT IT COSTS, stated rather than discovered later. On Windows a
+            // transparent window is composed with per-pixel alpha for its WHOLE
+            // life, not only while the page is see-through - the presentation
+            // path is chosen at creation. The `painted` figures this
+            // application quotes - median 91.3 ms, p95 94.3 ms over 18 clean
+            // runs on 868ba0d, 4 September 2026 - were taken on an OPAQUE
+            // window and therefore describe a pipeline this line has changed.
+            // THEY MUST BE RE-MEASURED (`CLICHE_BENCH=20`). Nobody has run the
+            // benchmark since; the effect is reasoned from how DWM composition
+            // is understood to work, and has not been observed on this machine.
+            //
+            // What it does NOT change: what the user sees during a capture. The
+            // page paints `html { background: #000 }` and then an opaque image
+            // over the whole viewport, so every pixel is already alpha 1 until
+            // the confirmation removes them.
+            .transparent(true)
             // THE line that makes this lot honest. The window is constructed now,
             // at startup, and stays invisible until a shortcut shows it.
             .visible(false)
@@ -614,8 +740,10 @@ pub fn perform_capture(app: &AppHandle) {
         // Kept from the old order even though this function no longer shows
         // anything: the window can still be up from a capture this press
         // interrupted, and that capture is now dead too. Leaving it would show
-        // a stale frozen screen with no run behind it.
-        let _ = window.hide();
+        // a stale frozen screen with no run behind it - or, since 5 September
+        // 2026, a confirmation whose window is still ignoring the pointer,
+        // which is why this goes through `hide_veil` like every other hide.
+        hide_veil(&window, "a frame the page was never handed");
         // The page was never told the URL, so the staged payload has no reader
         // and must not survive the run - 8.29 MB of the user's screen, in a
         // process that stays open for days.
@@ -1199,7 +1327,9 @@ pub fn veil_painted(app: AppHandle, webview: Webview, run: u64) {
 ///
 /// Returns `Result` so that a refusal reaches the page's `catch` instead of
 /// vanishing: a selection that was rejected must not look like one that
-/// succeeded.
+/// succeeded. The `Ok` side carries [`CopiedSize`], because since 5 September
+/// 2026 the page NAMES what it copied - `933×577 copié` - and those two numbers
+/// exist only here.
 /// **Veil window only, and this is the most important of the five guards.**
 /// `main` runs React and its dependency tree, and one compromised package there
 /// could call this with a full-screen rectangle and put the frozen screen on the
@@ -1219,7 +1349,7 @@ pub fn veil_selected(
     y0: f64,
     x1: f64,
     y1: f64,
-) -> Result<(), String> {
+) -> Result<CopiedSize, String> {
     // FIRST, before the frame is read, before anything is cut, before the
     // clipboard is touched.
     ipc::ensure_from(webview.label(), VEIL_WINDOW_LABEL, "veil_selected")?;
@@ -1297,36 +1427,62 @@ pub fn veil_selected(
         bytes = cut.pixels().len(),
     );
 
-    // THE COPY COMES FIRST, AND THE VEIL IS HIDDEN ONLY ONCE IT SUCCEEDS.
+    // THE VEIL IS NOT HIDDEN HERE ANY MORE, AND THAT IS THIS LOT.
     //
-    // It used to be the other way round, with this reasoning: "should it fail,
-    // the user is left with their screen back rather than with a frozen overlay
-    // they have to press Escape to be rid of". That reasoning was wrong, and the
-    // review bot on PR #5 found why. The refusal travels back to the page's
-    // `catch`, which paints it in the veil - so hiding first wrote the error
-    // message into a window nobody could see. The user got their desktop back,
-    // no image on the clipboard, and NO MESSAGE: a silent failure on the one
-    // action this product exists to perform.
+    // Two earlier versions of this comment stood here, and both are worth
+    // keeping in view because the second was still half wrong.
     //
-    // Hiding afterwards costs the ~10 ms the copy takes, all of it outside the
-    // 150 ms budget, which ends at `painted` and long before the user's drag.
-    // And it makes this path agree with the too-small refusal, which already
-    // leaves the veil up so the selection can be corrected (see the area check
-    // above, refused before the crop).
+    // 1. The copy used to come AFTER the hide, with this reasoning: "should it
+    //    fail, the user is left with their screen back rather than with a
+    //    frozen overlay they have to press Escape to be rid of". The review bot
+    //    on PR #5 found why that was wrong: the refusal travels back to the
+    //    page's `catch`, which paints it IN THE VEIL - so hiding first wrote the
+    //    error message into a window nobody could see.
+    // 2. So the order was swapped, and a successful copy hid the window on the
+    //    line after this one. That fixed the failure and left the success
+    //    silent: the screen simply came back, and the only report either way
+    //    was a line on a terminal nobody has open while a veil covers their
+    //    screen.
     //
+    // Since 5 September 2026 NEITHER outcome hides the window here. A copy that
+    // worked leaves the veil up and steps it out of the way - transparent, and
+    // no longer answering the pointer - while the page names what it copied;
+    // `veil_confirmed` takes the window down once that message has had its
+    // time. A copy that did not happen leaves the veil exactly as it was, which
+    // is what the too-small refusal above has always done (see the area check,
+    // which returns before the crop).
+    //
+    // Everything from here on is outside the 150 ms budget, which ends at
+    // `painted`, long before the user's drag.
+    let outcome = clipboard::copy_selection(&app, &cut);
+
+    // TAKEN FOR BOTH OUTCOMES, and deliberately before the `?` below.
+    //
+    // The failure branch is not a no-op even though the window is never
+    // click-through at this point: it is an ASSERTION, and it is what makes
+    // `AfterSelection`'s rule true of the code rather than merely true of the
+    // path that happens to be taken. Writing it as "set it only on success"
+    // would leave the refusal case relying on nothing having gone wrong
+    // earlier.
+    let after = AfterSelection::of(outcome.is_ok());
+    if let Err(error) = window.set_ignore_cursor_events(after.click_through()) {
+        eprintln!(
+            "[cliche] veil: could not set the pointer pass-through to {}: {error}",
+            after.click_through()
+        );
+    }
+
     // `?`: a refusal must reach the page's `catch`. A capture that did not make
     // it to the clipboard has failed, and it must not look like one that worked.
-    let copied = clipboard::copy_selection(&app, &cut)?;
+    // The veil stays up behind that refusal, answering the pointer, so the
+    // selection can be corrected and tried again.
+    let copied = outcome?;
 
     // The capture really is over now, so the frozen frame goes. Holding 8.29 MB
     // for a window nobody is looking at is a cost with no purpose in a process
     // that stays open for days - but it is only pointless ONCE the copy has
     // worked. Until then it is what a retry needs.
     *veil.frame() = None;
-
-    if let Err(error) = window.hide() {
-        eprintln!("[cliche] veil: could not hide the veil after the selection: {error}");
-    }
 
     println!(
         "{}",
@@ -1350,8 +1506,71 @@ pub fn veil_selected(
         }
     }
 
-    // `cut` is dropped here, its bytes now owned by the clipboard.
-    Ok(())
+    // `cut` is dropped here, its bytes now owned by the clipboard. Its two
+    // dimensions travel back first, because the confirmation NAMES them.
+    Ok(CopiedSize {
+        width: cut.width(),
+        height: cut.height(),
+    })
+}
+
+/// The page saying the confirmation has had its time: take the veil down.
+///
+/// # Why this is the page's call and not a timer here
+///
+/// The lifetime of a confirmation is `--dur-toast-dwell`, which lives in
+/// `src/design/tokens.css` with the paragraph explaining why it is 2.4 s and
+/// why it is written as a literal rather than derived from `--dur-medium`. A
+/// duration in Rust would be a second copy of that decision, free to drift from
+/// the one the message is actually animated with. The page reads the token and
+/// tells this function when it has elapsed.
+///
+/// **What that costs, said plainly:** if the page's timer never runs, the veil
+/// stays up - transparent and click-through, so the desktop is visible and
+/// usable through it, with a confirmation floating over it until the next
+/// capture. It is not a frozen screen and not a lost clipboard, and a veil page
+/// whose script is dead cannot show a capture at all, which is the larger
+/// failure by far.
+///
+/// # The run number is checked, like every other acknowledgement here
+///
+/// A confirmation belonging to run 3 must not take down the veil of run 4. That
+/// is not hypothetical: the shortcut can be pressed again during the 2.4 s the
+/// message is on screen. The page clears its own timer in `__clicheShow`; this
+/// is the second half of the same guard, on the side that owns the window.
+///
+/// **Veil window only.** `main` calling this could take the veil down in the
+/// middle of somebody's drag. A printed line rather than a `Result`, for the
+/// reason `veil_painted` gives: the page's `catch` reaches a console nobody can
+/// open.
+#[tauri::command]
+pub fn veil_confirmed(app: AppHandle, webview: Webview, run: u64) {
+    if let Err(refused) = ipc::ensure_from(webview.label(), VEIL_WINDOW_LABEL, "veil_confirmed") {
+        eprintln!("[cliche] veil: {refused}");
+        return;
+    }
+
+    let Some(veil) = app.try_state::<Veil>() else {
+        eprintln!("[cliche] veil: no veil state is managed; run {run} cannot close its veil");
+        return;
+    };
+
+    let current = veil.current_run();
+    if run != current {
+        eprintln!(
+            "[cliche] veil: run {run} asked to close its confirmation while run {current} is the \
+             capture on screen; the veil was left up"
+        );
+        return;
+    }
+
+    let Some(window) = app.get_webview_window(VEIL_WINDOW_LABEL) else {
+        eprintln!("[cliche] veil: the veil window does not exist; run {run} has nothing to close");
+        return;
+    };
+
+    hide_veil(&window, "the confirmation");
+    println!("[cliche] veil: run {run} confirmed; the veil is down");
 }
 
 /// Escape: close the veil and throw the run away.
@@ -1389,9 +1608,10 @@ pub fn veil_dismissed(app: AppHandle, webview: Webview) {
         veil.release(veil.current_run());
     }
     if let Some(window) = app.get_webview_window(VEIL_WINDOW_LABEL) {
-        if let Err(error) = window.hide() {
-            eprintln!("[cliche] veil: could not hide the veil: {error}");
-        }
+        // Escape is also the way out of a FAILURE the user does not want to
+        // dismiss by hand, and - should a confirmation ever be on screen when
+        // it is pressed - the path that hands the pointer back.
+        hide_veil(&window, "Escape");
     }
     println!("[cliche] veil: dismissed");
 }
@@ -1444,10 +1664,18 @@ pub fn spawn_bench(app: &AppHandle, runs: usize) {
         std::thread::sleep(BENCH_WARMUP);
 
         for run in 1..=runs {
+            // THE BENCHMARK NEVER GOES THROUGH `veil_selected`, AND THEREFORE
+            // NEVER THROUGH THE CONFIRMATION. It calls `perform_capture`
+            // directly and waits on `Veil::painted`; there is no drag, no
+            // selection, and no 2.4 s dwell anywhere on this path. That is what
+            // keeps 20 runs measuring the same interval they measured before
+            // the confirmation existed - see the report's own note.
+            //
+            // `hide_veil` rather than `hide`: the extra call hands the pointer
+            // back, and it lands inside `BENCH_SETTLE` below, before
+            // `begin_run` opens the run that gets measured.
             if let Some(window) = app.get_webview_window(VEIL_WINDOW_LABEL) {
-                if let Err(error) = window.hide() {
-                    eprintln!("[cliche] bench: could not hide the veil: {error}");
-                }
+                hide_veil(&window, "a benchmark run");
             }
             std::thread::sleep(BENCH_SETTLE);
 
@@ -1482,7 +1710,7 @@ pub fn spawn_bench(app: &AppHandle, runs: usize) {
         }
 
         if let Some(window) = app.get_webview_window(VEIL_WINDOW_LABEL) {
-            let _ = window.hide();
+            hide_veil(&window, "the benchmark");
         }
 
         println!("[cliche] bench: finished");
@@ -1763,6 +1991,39 @@ mod tests {
             !may_show(0, 0, 0),
             "before the first capture there is nothing to show"
         );
+    }
+
+    #[test]
+    fn a_refusal_never_takes_the_pointer_away_from_the_window_showing_it() {
+        // THE ASYMMETRY OF 5 SEPTEMBER 2026, as a decision rather than as the
+        // shape of a control flow. It is kept as a function of one boolean for
+        // the reason `may_show` is: `set_ignore_cursor_events` needs a window
+        // and an event loop, and a rule that needs neither can be put to both
+        // of its rows here.
+        //
+        // The row that matters is the second. The failure toast is a
+        // `.c-note--danger` carrying a 44 px `.c-toast__dismiss` button, and a
+        // click-through window would put that button behind glass: a message
+        // that names what went wrong and offers a control nobody can reach.
+        // Mirrored in TypeScript by `planFor` in src/veil/confirmation.ts,
+        // whose own test states the same rule - written twice, in two
+        // languages, so the day they disagree is a signal.
+        assert!(
+            AfterSelection::of(true).click_through(),
+            "the copy worked, the capture is over, and a veil that still \
+             answered the pointer would be a full-screen sheet of glass over \
+             the desktop the user can once again see through it"
+        );
+        assert!(
+            !AfterSelection::of(false).click_through(),
+            "a refusal leaves the veil up SO THAT the user can act on it - \
+             correct the selection, or dismiss the message. Letting the cursor \
+             through takes both away"
+        );
+
+        // The two are distinguishable, so neither branch can quietly become
+        // the other.
+        assert_ne!(AfterSelection::of(true), AfterSelection::of(false));
     }
 
     #[test]
