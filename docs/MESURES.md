@@ -37,6 +37,29 @@ les deux formes de rapport ne sont pas comparables. Seul le TOTAL l'est.**
 
 **150 ms** au TOTAL, p95. C'est le p95 qui compte, pas la médiane.
 
+### ⚠️ TOUS LES CHIFFRES CI-DESSOUS SONT PÉRIMÉS — 6 septembre 2026
+
+`.transparent(true)` a été posé sur la fenêtre du voile ce jour-là, pour que la
+confirmation puisse se poser sur un fond transparent. Sur Windows, cela fait
+composer la fenêtre **avec alpha par pixel pendant toute sa vie**, pas seulement
+pendant la confirmation : le chemin de présentation est choisi à la création.
+
+Les séances listées plus bas ont donc toutes été prises sur une fenêtre
+**opaque**. Elles décrivent un pipeline qui n'existe plus. **Rien n'est effacé** —
+la règle de ce fichier est qu'un nouveau chiffre se pose À CÔTÉ de l'ancien — mais
+aucune de ces lignes ne doit être citée comme l'état actuel tant qu'une séance
+n'a pas été refaite après ce changement.
+
+La re-mesure n'a pas été faite le jour du changement : elle demande vingt
+captures plein écran sur la machine de Thierry, et elle lui revient. La
+procédure est inchangée, elle est rappelée dans `docs/PREMIER-ESSAI.md` §6.
+
+Deux autres choses sont entrées dans le produit ce jour-là sans être mesurées :
+le masquage de la fenêtre principale avant une capture lancée depuis la tuile
+(`RECOMPOSE_SETTLE`, 120 ms, un raisonnement et non une mesure), et le fait que
+ce masquage n'est **pas** sur le chemin du raccourci — donc le chemin de
+référence du budget, lui, n'a pas gagné d'étape.
+
 ---
 
 ## Les séances
