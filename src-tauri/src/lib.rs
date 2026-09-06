@@ -91,6 +91,14 @@ pub fn run() {
             // instant registration succeeds.
             app.manage(Timings::new());
 
+            // The debt the launcher tile takes on when it hides the window
+            // before a capture. Managed BEFORE the veil exists and before the
+            // shortcut is bound, for the same reason as the instrument above:
+            // `launch::hide_main_window` refuses to hide anything it cannot
+            // record, so an unmanaged claim would silently turn the tile back
+            // into a capture with Cliche in the frame.
+            app.manage(launch::MainWindowClaim::new());
+
             // The clipboard step's own instrument, and a SEPARATE type on
             // purpose: Tauri manages state by type, and these figures must never
             // be aggregated with the pipeline's - the write happens after the

@@ -1,19 +1,23 @@
 /*
  * The monitor list, as the backend reports it at startup.
  *
- * # WHY THIS IS A COMPONENT OF ITS OWN, AND WHERE IT IS GOING
+ * # WHY THIS IS A COMPONENT OF ITS OWN, AND WHERE IT ENDED UP
  *
  * It was the whole of `App.tsx` until 6 September 2026, when the launcher took
- * that place. It is NOT dead code and was not deleted: it is the diagnostic
- * section of the help page, which does not exist yet. Until it does, it is
- * mounted behind `#/diagnostic` so that `describe_displays` keeps being called
- * by something a person can open, rather than sitting in a file nothing
- * imports - which is how a probe stops working without anyone noticing.
+ * that place. It spent the rest of that day behind `#/diagnostic`, a route whose
+ * only job was to keep `describe_displays` called by something a person could
+ * open - which is how a probe stops working without anyone noticing.
+ *
+ * It is now the diagnostic section of `Help.tsx`, and `#/diagnostic` is GONE.
+ * One way in, not two: the second was reachable only by typing a URL into a
+ * window that has no address bar, and two doors into one read-out is how the
+ * two come to disagree.
  *
  * The wording is deliberately still English and deliberately NOT in
- * `src/strings.ts`: this is an engineering read-out, and the day it becomes a
- * section of the help page it gets French sentences decided in the showcase
- * first, like everything else in that catalogue.
+ * `src/strings.ts`: this is an engineering read-out, not interface prose. The
+ * day somebody decides it should speak French, the sentences get decided in the
+ * showcase first, like every other value in that catalogue - which is exactly
+ * why moving this component into the help page did not translate it in passing.
  *
  * The outer `<main class="app">` that used to wrap this went with the launcher:
  * the padding is now `.c-shell__body`'s, and spending `--gutter` twice was the

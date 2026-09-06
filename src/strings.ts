@@ -89,7 +89,19 @@ export const UI_STRINGS = {
 
   /* Help: the headings, and what each registered shortcut DOES.
      `captureRegion` above is one of these too - it is the launcher tile and the
-     help line at once, which is the point of a catalogue. */
+     help line at once, which is the point of a catalogue.
+
+     `helpTitle` NAMES THE SCREEN, and it is the one value in this file whose
+     wording is a COMPROMISE rather than a decision - flagged here so nobody
+     reads it as settled. The maquette draws the key map (`#/systeme`, section
+     « V1 · aide ») but publishes no name for the screen it belongs to and no
+     control that opens it: there is no « Aide » anywhere in Showcase.tsx, and
+     the rule this catalogue obeys is that a value it does not publish may not
+     be invented here. « Raccourci » is what the showcase does publish
+     (a field label, `s-fields`), it is the subject of the screen, and it is
+     singular where a list of shortcuts wants a plural. The fix is not in this
+     file: the showcase has to publish the word first. */
+  helpTitle: 'Raccourci',
   helpCategoryCapture: 'Capture',
   dismissVeil: 'Fermer le voile sans capturer',
   captureWindowUnderPointer: 'Capturer la fenêtre sous le pointeur',
