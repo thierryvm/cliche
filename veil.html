@@ -6,8 +6,8 @@
     <!--
       A SEPARATE entry point, on purpose.
 
-      This document must not load React, the component layer or the application
-      window's stylesheet. Two reasons, and the second is the one that matters:
+      This document must not load React or the application window's stylesheet.
+      Two reasons, and the second is the one that matters:
 
       1. It pollutes the measurement. Lot 1d asks how long it takes to paint a
          frozen screen; a bundle that boots a framework first answers a
@@ -31,12 +31,39 @@
       away from the file that is checked, and the build would keep saying the
       contrast is fine about values this page no longer uses.
 
-      The rules below are inline rather than a second stylesheet: they are
+      THE COMPONENT LAYER IS THE SECOND EXCEPTION, since 5 September 2026, and
+      an earlier version of this comment forbade it outright. What changed is
+      the product: a capture now ends with a CONFIRMATION - or, when the
+      clipboard refuses, with a failure that stays until it is dismissed - and
+      that message is a component the design system already publishes,
+      `c-note c-note--success c-toast` (src/design/Showcase.tsx, section
+      s-toast). The alternative was to restate `.c-note`, `.c-toast`,
+      `.c-toast-region`, `.c-toast__message`, `.c-toast__dismiss`, `.c-btn`,
+      `.c-btn--ghost`, `.c-btn--icon` and `.c-btn__glyph` here - eight
+      components copied into a page nobody would think to update, which is the
+      same drift the token file's own header opens by forbidding, and worse:
+      scripts/check-contrast.mjs measures the ORIGINALS.
+
+      WHAT IT COSTS THE BUDGET: nothing, for the same reason the token file
+      costs nothing. Both are fetched, parsed and applied during the PREHEAT,
+      seconds before any shortcut. What it costs afterwards is selector matching
+      on a document of fourteen elements, at every style recalculation.
+
+      WHAT IT DOES NOT BRING IN, checked rather than assumed: components.css
+      declares no `html`, `body` or `*` rule (its only top-level block is a
+      `:root` of four component constants), so nothing in it repaints this
+      document or changes its layout. Its one `backdrop-filter` belongs to
+      `.c-glass, .c-titlebar`; neither class exists in this file, and a rule
+      that matches no element builds no compositor layer. It has no @import,
+      no url() and no @font-face, so it adds no request.
+
+      The rules below are inline rather than a third stylesheet: they are
       specific to this document and a separate file would be one more request.
       `style-src` already allows 'unsafe-inline'; no CSP change is needed, and
-      the linked token file is served from 'self', which `default-src` covers.
+      both linked files are served from 'self', which `default-src` covers.
     -->
     <link rel="stylesheet" href="/src/design/tokens.css" />
+    <link rel="stylesheet" href="/src/design/components.css" />
     <style>
       /*
        * --veil-grip-outset and --veil-grip-room now live in
@@ -371,13 +398,13 @@
       }
 
       /*
-       * THE KEYBOARD LINE, and the two messages that share its plate.
+       * THE KEYBOARD LINE.
        *
        * COST AT OPENING: ZERO, and that is a hard constraint rather than a
-       * preference. Both elements are in the document from the preheat wearing
-       * `hidden`, exactly like #selection, and neither is unhidden until the
-       * first pointer release - which is far behind `painted`. The measured p95
-       * leaves 15.7 ms of margin on the 150 ms budget.
+       * preference. It is in the document from the preheat wearing `hidden`,
+       * exactly like #selection, and it is not unhidden until the first pointer
+       * release - which is far behind `painted`. The measured p95 leaves 15.7 ms
+       * of margin on the 150 ms budget.
        *
        * FORBIDDEN ON THIS CHROME, all of it, for one mechanical reason:
        * backdrop-filter, transform, will-change and any opacity below 1 make
@@ -389,12 +416,17 @@
        * CONTRAST: white on black is 21:1, and it does not depend on the
        * screenshot underneath because the plate is opaque. The two-tone ring is
        * what separates the plate from a black desktop.
+       *
+       * IT USED TO SHARE THESE RULES WITH `#notice`, a hand-drawn plate that
+       * showed whatever Rust refused. That element is GONE as of 5 September
+       * 2026: the same job is now done by the system's own toast, below, which
+       * is measured, published in the showcase, and carries a way out.
        */
-      #hint,
-      #notice {
+      #hint {
         position: fixed;
         left: var(--gutter);
         right: var(--gutter);
+        bottom: var(--space-5);
         margin: 0;
         padding: var(--space-2) var(--space-3);
         background: var(--veil-stroke-dark);
@@ -408,23 +440,80 @@
         pointer-events: none;
       }
 
-      #hint {
-        bottom: var(--space-5);
+      /*
+       * THE CONFIRMATION, AND THE FAILURE THAT DOES NOT FADE.
+       *
+       * Everything about the toast itself - its colours, its glyph rule, where
+       * it sits, how wide it may get, that it is raised, and when it leaves -
+       * comes from src/design/components.css, linked above. NOTHING of it is
+       * restated here. The four rules below are what this DOCUMENT owes it, and
+       * no more.
+       *
+       * COST AT OPENING: ZERO, again, and by the same construction. #toast-region
+       * wears `hidden` from the preheat, so its whole subtree - both glyphs, the
+       * message, the button - is out of the render tree until a selection has
+       * been judged, which is long after `painted` and at human speed. The
+       * `animation` shorthand on `.c-toast` and the `transform`/`opacity` in its
+       * keyframes therefore promote nothing at parse: an element that is not
+       * rendered gets no layer.
+       */
+
+      /* 1. THE BASE LAYER components.css assumes and this page does not have.
+         src/styles.css gives the application `* { box-sizing: border-box }`;
+         this document must not load that file. Without the rule, `.c-toast`'s
+         `inline-size: 100%` measures the CONTENT box and the toast overflows
+         its region by twice its padding plus twice its border. Scoped to the
+         toast, so nothing else in this document changes. */
+      #toast-region,
+      #toast-region * {
+        box-sizing: border-box;
       }
 
-      /* Above the hint, because it answers a key the user has just pressed. */
-      #notice {
-        bottom: calc(var(--space-5) + var(--space-7));
-        /* A refusal reads heavier than a hint: the same two-tone pair, four
-           token-widths instead of one.
-           NOT --danger, and the temptation is worth naming - the dark theme
-           redefines it, and this window paints on the user's screenshot where
-           our themes do not exist. That is the exact defect that had
-           --veil-handle reading var(--accent) until 4 September 2026. */
-        box-shadow:
-          0 0 0 calc(var(--veil-stroke-width) * 2) var(--veil-stroke-light),
-          0 0 0 calc(var(--veil-stroke-width) * 4) var(--veil-stroke-dark);
-        font-weight: var(--weight-semibold);
+      /* 2. WHERE IT IS ANCHORED, AND WHAT THE POINTER SAYS OVER IT.
+         `.c-toast-region` is `position: absolute`, which in the application
+         resolves against the window shell. This document has no positioned
+         ancestor, so `fixed` states what is meant - the foot of the SCREEN -
+         rather than relying on the initial containing block happening to be
+         the same rectangle.
+         The cursor comes with it: <html> declares `crosshair` and `cursor`
+         inherits, so without this line the dismiss button would invite a drag
+         it does not accept. */
+      #toast-region {
+        position: fixed;
+        cursor: default;
+      }
+
+      /* 3. WHICH GLYPH. Both are in the markup, each with its own path, and the
+         tone class chooses between them - PRD A4: the semantic keeps its word
+         AND its glyph, the colour is the third cue.
+         `display: none` and not the `hidden` attribute: that attribute's UA
+         rule is written for the HTML namespace and these two elements are SVG.
+         scripts/check-icons.mjs holds both `d` values against
+         src/design/Glyph.tsx, which is the one list of icon paths in this
+         product: two icon sets start identical and stop being so at the first
+         correction, and nothing in the build would otherwise notice. */
+      #toast:not(.c-note--success) > [data-toast-glyph='success'],
+      #toast:not(.c-note--danger) > [data-toast-glyph='danger'] {
+        display: none;
+      }
+
+      /* 4. CONFIRMATION MODE: the veil steps out of the way.
+         Set by main.ts on the root, and only after a copy has SUCCEEDED. The
+         window itself is made transparent in src-tauri/src/veil.rs (`create`,
+         and read the note there about what that costs the measurement) and
+         stops answering the pointer in `veil_selected`; these two rules are the
+         page's half of the same move. Without the first, `background: #000`
+         above would paint a full-screen black rectangle and "transparent" would
+         mean nothing; without the second, a two-tone band would frame a screen
+         that is no longer being captured.
+         A FAILURE gets neither: the veil stays opaque, keeps its band, and goes
+         on answering the pointer. */
+      html.is-confirmed {
+        background: transparent;
+      }
+
+      html.is-confirmed #edge {
+        display: none;
       }
     </style>
   </head>
@@ -439,6 +528,10 @@
 
       #edge carries no `hidden` attribute and no script ever touches it: it is
       on screen from the moment the window is, which is the entire point of it.
+      One exception, and it is declarative rather than scripted - the rule
+      `html.is-confirmed #edge` above takes it away once the capture has
+      SUCCEEDED, because by then there is no capture left to announce and the
+      band would be framing the user's own desktop.
 
       It sits BEFORE #selection deliberately. #selection paints its scrim over
       everything outside the chosen rectangle, so once a drag starts the band is
@@ -470,16 +563,81 @@
       <div class="grip grip-se"></div>
     </div>
     <!--
-      AFTER #selection, so both plates paint over its scrim. Both carry
-      `hidden` from the preheat: see the note above their rules for why nothing
-      may be built at capture time.
+      AFTER #selection, so the plate paints over its scrim. It carries `hidden`
+      from the preheat: see the note above its rules for why nothing may be
+      built at capture time.
 
-      The wording is English, like every other user-facing string in this
-      application. The separator is an entity rather than the character itself,
-      so this file stays ASCII whatever writes it.
+      The wording is English, like the rest of this line's audience - it names
+      two keys. The separator is an entity rather than the character itself, so
+      this file stays ASCII whatever writes it.
     -->
     <p id="hint" hidden>Enter or double-click copies &#160;&#183;&#160; Esc cancels</p>
-    <p id="notice" hidden role="alert"></p>
+    <!--
+      THE TOAST. One element for both outcomes, and the choice is worth stating
+      because the other one was tried on paper first.
+
+      TWO elements - a success and a failure, each with its tone class and its
+      `role` written here - would let a screen reader see both live regions from
+      the preheat, which is the friendlier order. It would also put the class
+      list of the maquette in an HTML file that no test reads, free to drift
+      from `planFor` in src/veil/confirmation.ts, which is the thing under test.
+      ONE element, dressed from the plan, keeps a single source for the markup
+      and pays for it with a `role` set at the moment the region is revealed.
+      That is the trade, taken deliberately.
+
+      NOTHING BELOW CARRIES A WORD. Every label the user reads is written by
+      main.ts from src/strings.ts - the catalogue scripts/check-strings.mjs
+      holds against src/design/Showcase.tsx, character for character. The three
+      empty spans are the three nodes of the maquette's sentence: a figure in
+      the numeric face, a bold lead, and the rest. The whitespace between them
+      would be text: they are kept on one line for that reason, and the spacing
+      the sentence needs travels inside `plan.text`.
+    -->
+    <div class="c-toast-region" id="toast-region" hidden>
+      <div class="c-note c-toast" id="toast">
+        <svg
+          class="c-btn__glyph"
+          data-toast-glyph="success"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M5 13l4 4L19 7" />
+        </svg>
+        <svg
+          class="c-btn__glyph"
+          data-toast-glyph="danger"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 8v5M12 17h.01M12 3l9 17H3l9-17Z" />
+        </svg>
+        <span class="c-toast__message"><span class="c-num" id="toast-measurement" hidden></span><strong id="toast-lead" hidden></strong><span id="toast-text"></span></span>
+        <button type="button" class="c-btn c-btn--ghost c-btn--icon c-toast__dismiss" id="toast-dismiss" hidden>
+          <svg
+            class="c-btn__glyph"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+    </div>
     <script type="module" src="/src/veil/main.ts"></script>
   </body>
 </html>

@@ -72,6 +72,7 @@ pub fn run() {
             veil::veil_decoded,
             veil::veil_painted,
             veil::veil_selected,
+            veil::veil_confirmed,
             veil::veil_dismissed,
         ])
         .setup(|app| {

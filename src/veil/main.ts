@@ -1,12 +1,27 @@
 /**
  * The veil page: show a frozen screen, say when it is painted, let the user
- * draw a rectangle on it, resize it, move it, copy it, close on Escape.
+ * draw a rectangle on it, resize it, move it, copy it, SAY WHETHER THE COPY
+ * WORKED, close on Escape.
  *
- * Bare TypeScript. No React, no component layer. The only import is `invoke`,
- * because both the paint acknowledgement and the selection have to reach Rust
- * and that is the primitive that carries them. The design tokens ARE loaded, as
- * a stylesheet linked from veil.html - see the comment there for why that costs
- * the budget nothing.
+ * Bare TypeScript. No React and no component runtime. `invoke` is imported
+ * because every acknowledgement has to reach Rust and that is the primitive
+ * that carries them; the string catalogue and the two pure modules next door
+ * are the rest. The design tokens AND the component stylesheet are loaded, as
+ * two links in veil.html - see the comment there for why that costs the budget
+ * nothing, and for what the component layer does not bring in with it.
+ *
+ * ## What happens after a copy - 5 September 2026
+ *
+ * Until that day the window was hidden the instant the clipboard took the
+ * image, and a clipboard that REFUSED wrote a sentence into a plate this file
+ * drew by hand. Both are gone. A copy that worked leaves the veil up,
+ * transparent and no longer answering the pointer, showing the system's own
+ * `c-note c-note--success c-toast` for the length of `--dur-toast-dwell`; a
+ * copy that did not happen leaves it opaque and interactive, showing
+ * `c-note c-note--danger c-toast`, until the message is dismissed or Escape is
+ * pressed. WHICH of the two, with which ARIA role, for how long, and whether
+ * this window still answers the pointer, is decided in `./confirmation` and
+ * mirrored in Rust by `veil::AfterSelection`.
  *
  * ## This file performs NO coordinate conversion
  *
@@ -91,14 +106,24 @@
  *
  * ## Nothing added by this lot is inside that measurement
  *
- * The grips, the keyboard line and the refusal plate are all static markup
- * wearing `hidden` since the preheat, and none of them is unhidden before the
- * first pointer press - which is after `painted`, at human speed. None of them
- * carries `backdrop-filter`, `transform`, `will-change` or an opacity below 1,
- * each of which would make the compositor build a layer AT PARSE, inside the
- * interval lot 1d measures. The p95 leaves 15.7 ms of margin; this lot spends
- * none of it. That is reasoning about how Blink is understood to work, not a
- * measurement taken on this machine - the same standing caveat as `#edge`.
+ * The grips, the keyboard line and the toast are all static markup wearing
+ * `hidden` since the preheat, and none of them is unhidden before the first
+ * pointer press - which is after `painted`, at human speed. None of them
+ * carries `backdrop-filter`, `transform`, `will-change` or an opacity below 1
+ * AT PARSE, each of which would make the compositor build a layer inside the
+ * interval lot 1d measures. `.c-toast` does declare an `animation` whose
+ * keyframes move `transform` and `opacity` - but its region is `hidden`, so the
+ * whole subtree is out of the render tree until a selection has been judged,
+ * and an element that is not rendered gets no layer. The p95 leaves 15.7 ms of
+ * margin; this lot spends none of it. That is reasoning about how Blink is
+ * understood to work, not a measurement taken on this machine - the same
+ * standing caveat as `#edge`.
+ *
+ * ONE THING IN THIS LOT IS NOT COVERED BY THAT ARGUMENT, and it is the window
+ * rather than the page: `create` now builds the veil TRANSPARENT, which changes
+ * how Windows composes it for its whole life and not only while the
+ * confirmation is up. The `painted` figures quoted below were taken on an
+ * opaque window. They must be re-measured.
  *
  * ## The edge frame is inside that acknowledgement, and this is why
  *
@@ -139,6 +164,19 @@ import {
   movingCorner,
 } from './zones';
 import type { CursorName, Grab, Point, Rect } from './zones';
+
+// THE SAME SPLIT, for the same reason, applied to what happens once the
+// clipboard has answered: `./confirmation` decides WHICH message, with which
+// ARIA role, for how long, and whether this window still answers the pointer.
+// Read the header there before moving any of it back here - in particular the
+// asymmetry between a copy that worked and one that did not.
+import { millisecondsIn, planFor, sizeLabel } from './confirmation';
+import type { ToastPlan, ToastTiming } from './confirmation';
+
+// The wording, from the ONE catalogue. `scripts/check-strings.mjs` fails the
+// suite the day a label below is re-typed here instead of imported, and the day
+// the catalogue stops agreeing with `src/design/Showcase.tsx`.
+import { UI_STRINGS } from '../strings';
 
 // ---------------------------------------------------------------------------
 // THE COLD-START TRACER. Added 4 September 2026, and it is an instrument.
@@ -223,7 +261,12 @@ const frame = document.getElementById('frame');
 const selection = document.getElementById('selection');
 const edge = document.getElementById('edge');
 const hint = document.getElementById('hint');
-const notice = document.getElementById('notice');
+const toastRegion = document.getElementById('toast-region');
+const toast = document.getElementById('toast');
+const toastMeasurement = document.getElementById('toast-measurement');
+const toastLead = document.getElementById('toast-lead');
+const toastText = document.getElementById('toast-text');
+const toastDismiss = document.getElementById('toast-dismiss');
 
 // Not a defensive nicety: without these nodes there is nothing to paint and
 // nothing to draw on, and the failure would otherwise surface as an
@@ -251,8 +294,30 @@ if (!(edge instanceof HTMLElement)) {
 if (!(hint instanceof HTMLElement)) {
   throw new Error('Cannot run the veil: #hint is missing from veil.html');
 }
-if (!(notice instanceof HTMLElement)) {
-  throw new Error('Cannot run the veil: #notice is missing from veil.html');
+// The confirmation, and the failure. Same reasoning again, and the stake is the
+// same one #edge carries: a capture whose outcome nothing reports is the defect
+// of 5 September 2026 - the screen came back with no word either way, and a
+// clipboard that had refused looked exactly like one that had not.
+if (!(toastRegion instanceof HTMLElement)) {
+  throw new Error('Cannot run the veil: #toast-region is missing from veil.html');
+}
+if (!(toast instanceof HTMLElement)) {
+  throw new Error('Cannot run the veil: #toast is missing from veil.html');
+}
+if (!(toastMeasurement instanceof HTMLElement)) {
+  throw new Error('Cannot run the veil: #toast-measurement is missing from veil.html');
+}
+if (!(toastLead instanceof HTMLElement)) {
+  throw new Error('Cannot run the veil: #toast-lead is missing from veil.html');
+}
+if (!(toastText instanceof HTMLElement)) {
+  throw new Error('Cannot run the veil: #toast-text is missing from veil.html');
+}
+// A BUTTON, not merely an element: `hidden` and `aria-label` would work on any
+// tag, and a <div> would take neither the keyboard nor the focus ring the
+// design system draws on `.c-btn`. This is the only control in the veil.
+if (!(toastDismiss instanceof HTMLButtonElement)) {
+  throw new Error('Cannot run the veil: #toast-dismiss is missing from veil.html');
 }
 
 const root = document.documentElement;
@@ -284,6 +349,40 @@ const GRIP_OUTSET = tokenPixels('--veil-grip-outset');
 
 /** The shortest side that still has room for a midpoint dot. */
 const GRIP_ROOM = tokenPixels('--veil-grip-room');
+
+/** The same read, for a duration token. See `millisecondsIn`. */
+const tokenMilliseconds = (name: string): number => {
+  const raw = getComputedStyle(root).getPropertyValue(name);
+
+  try {
+    return millisecondsIn(raw);
+  } catch (error: unknown) {
+    throw new Error(
+      `Cannot run the veil: ${name} does not resolve to a duration (${String(error)})`,
+    );
+  }
+};
+
+/**
+ * How long the confirmation owns the screen, read from the token layer.
+ *
+ * RE-READ AT EVERY CONFIRMATION, and not resolved once like the two geometry
+ * tokens above. `--dur-short` falls to `0s` under `prefers-reduced-motion`, and
+ * that is a setting the user can change while this application is running; a
+ * value frozen at the preheat would go on describing the setting they had when
+ * they launched it. Two style reads, once per successful capture, at human
+ * speed and far outside the 150 ms budget.
+ */
+const toastTiming = (): ToastTiming => ({
+  dwellMs: tokenMilliseconds('--dur-toast-dwell'),
+  fadeMs: tokenMilliseconds('--dur-short'),
+});
+
+// Called once during the preheat, for its THROW and not for its value: a
+// mistyped or deleted duration token then fails where every other token error
+// in this file does - at load, seconds before any shortcut - rather than on the
+// first capture somebody makes.
+toastTiming();
 
 /**
  * The run currently being shown. An image whose decode finishes after a newer
@@ -400,13 +499,79 @@ const drawSelection = (pair: { anchor: Point; pointer: Point }): void => {
   selection.hidden = false;
 };
 
-/** Puts the refusal away. Called as soon as the user acts again. */
-const clearNotice = (): void => {
-  if (!notice.hidden) {
-    notice.hidden = true;
-    notice.textContent = '';
+/**
+ * The timer that closes a confirmation, while one is pending.
+ *
+ * It carries the run it belongs to in its closure. `null` means nothing is
+ * counting down - which is the state of every capture that has not yet been
+ * validated, and of one whose confirmation has already fired.
+ */
+let confirmationTimer: number | null = null;
+
+/** Stops a pending confirmation from closing a veil it no longer owns. */
+const clearConfirmationTimer = (): void => {
+  if (confirmationTimer !== null) {
+    window.clearTimeout(confirmationTimer);
+    confirmationTimer = null;
   }
 };
+
+/**
+ * Puts the toast away. Called as soon as the user acts again, and on the way
+ * out of every capture.
+ *
+ * The tone classes go with it, so the element is back to the neutral
+ * `c-note c-toast` the document was parsed with: a toast that kept
+ * `c-note--danger` would flash red for one frame the next time it is shown as a
+ * success, and `c-toast--transient` left behind would start a fade nobody asked
+ * for.
+ */
+const hideToast = (): void => {
+  if (toastRegion.hidden) {
+    return;
+  }
+  toastRegion.hidden = true;
+  toast.className = 'c-note c-toast';
+  toast.removeAttribute('role');
+  toastMeasurement.hidden = true;
+  toastMeasurement.textContent = '';
+  toastLead.hidden = true;
+  toastLead.textContent = '';
+  toastText.textContent = '';
+  toastDismiss.hidden = true;
+};
+
+/**
+ * Draws a plan. Nothing here decides anything - see `./confirmation`.
+ *
+ * The class list is written WHOLE rather than added to, so the element cannot
+ * accumulate a tone from a previous message; `hideToast` above does the same on
+ * the way out, and either alone would be enough. Both are kept because the
+ * failure they prevent is silent.
+ */
+const showToast = (plan: ToastPlan): void => {
+  toast.className = plan.classes.join(' ');
+  toast.setAttribute('role', plan.role);
+
+  toastMeasurement.textContent = plan.measurement ?? '';
+  toastMeasurement.hidden = plan.measurement === null;
+  toastLead.textContent = plan.lead ?? '';
+  toastLead.hidden = plan.lead === null;
+  toastText.textContent = plan.text;
+  toastDismiss.hidden = !plan.dismissable;
+
+  toastRegion.hidden = false;
+};
+
+// The button's label, written once during the preheat. It is `aria-label` and
+// not text because the control is an icon: `.c-btn--icon` is 44 px of glyph,
+// and PRD A2 gives it the same focus ring as every other control.
+toastDismiss.setAttribute('aria-label', UI_STRINGS.dismissMessage);
+
+toastDismiss.addEventListener('click', (event: MouseEvent) => {
+  event.preventDefault();
+  hideToast();
+});
 
 /**
  * Hands the pointer back, if this page ever took it.
@@ -446,9 +611,16 @@ const reset = (): void => {
   setCursor(null);
   selection.hidden = true;
   hint.hidden = true;
-  clearNotice();
+  hideToast();
+  clearConfirmationTimer();
   frame.hidden = true;
   frame.removeAttribute('src');
+  // `is-confirmed` is deliberately NOT removed here. This function's only
+  // caller is Escape, and Escape during a confirmation is followed by
+  // `veil_dismissed`, which hides the window a round trip later: taking the
+  // class off now would repaint the page opaque black for those few frames,
+  // over the desktop the user can currently see. `__clicheShow` removes it
+  // instead, before the next capture is drawn.
 };
 
 window.__clicheShow = (source: string, run: number): void => {
@@ -471,7 +643,7 @@ window.__clicheShow = (source: string, run: number): void => {
     reportPhase('show-entered');
   }
 
-  // A rectangle, a hint or a refusal left over from the previous capture must
+  // A rectangle, a hint or a message left over from the previous capture must
   // not appear over the new one, even for a frame. `reset` cannot be used here:
   // it clears `currentRun`, which is set immediately below.
   corners = null;
@@ -482,7 +654,19 @@ window.__clicheShow = (source: string, run: number): void => {
   setCursor(null);
   selection.hidden = true;
   hint.hidden = true;
-  clearNotice();
+  hideToast();
+
+  // THE END OF A CONFIRMATION, whichever way it ends. The timer of the previous
+  // capture is dropped here - it belongs to a run that is over, and left alone
+  // it would ask Rust to take down the veil this call is about to fill. Rust
+  // refuses that on the run number as well (`veil_confirmed`); this is the half
+  // on the side that knows a new capture has started.
+  //
+  // The class comes off in the same breath, and this is the ONLY place it does:
+  // it runs while the window is still hidden, so the page is opaque again
+  // before anything is shown. See `reset` for why Escape does not do it.
+  clearConfirmationTimer();
+  root.classList.remove('is-confirmed');
 
   currentRun = run;
 
@@ -571,7 +755,7 @@ const commit = (): void => {
   const rect = rectOf(corners);
   const run = currentRun;
 
-  clearNotice();
+  hideToast();
 
   // The four numbers go over as measured. No scale, no rounding - see the file
   // header.
@@ -582,13 +766,20 @@ const commit = (): void => {
     x1: rect.right,
     y1: rect.bottom,
   })
-    .then(() => {
+    .then((reply: unknown) => {
       // Only if a newer capture has not started in the meantime. Same reasoning
       // as the decode acknowledgement above: a reply belonging to run 3 must
       // not tear down run 4.
-      if (currentRun === run) {
-        reset();
+      if (currentRun !== run) {
+        return;
       }
+      // `reply` is `unknown` on purpose, and `sizeLabel` validates it rather
+      // than casting: `invoke<T>` is an assertion TypeScript cannot check about
+      // a value that crossed an IPC frontier.
+      enterConfirmation(
+        run,
+        planFor({ copied: true, size: sizeLabel(reply) }, toastTiming()),
+      );
     })
     .catch((error: unknown) => {
       // SHOWN, not merely logged - and that is a repair. Rust refuses a
@@ -599,18 +790,101 @@ const commit = (): void => {
       // a key.
       //
       // The selection stays exactly as it was, and stays editable: the fix for
-      // "too small" is to make it bigger, which is now a gesture away.
+      // "too small" is to make it bigger, which is a gesture away. The veil
+      // stays opaque and goes on answering the pointer - `AfterSelection` in
+      // src-tauri/src/veil.rs is the other half of that rule.
       console.error('[cliche] veil: the selection was refused', error);
       if (currentRun !== run) {
         return;
       }
-      notice.textContent =
-        typeof error === 'string' ? error : `the selection was refused: ${String(error)}`;
-      notice.hidden = false;
+      // Rust's own sentence, shown as it arrived. It is English, in a French
+      // interface, and that is the lesser of the two faults available: the
+      // maquette's specimen wording names ONE cause - another application
+      // holding the clipboard - and the refusal a user meets most often is a
+      // selection too small to be a deliberate drag.
+      showToast(
+        planFor(
+          {
+            copied: false,
+            reason: typeof error === 'string' ? error : String(error),
+          },
+          toastTiming(),
+        ),
+      );
     });
 };
 
+/**
+ * The capture worked: step the veil out of the way and say so.
+ *
+ * THE FROZEN SCREEN GOES FIRST, and that line is what makes the word
+ * "transparent" mean anything: this window shows a pixel-exact copy of the
+ * desktop, so a transparent PAGE over a visible image is indistinguishable from
+ * the image. The band and the page's own black background go with it, in CSS,
+ * through `is-confirmed` on the root.
+ *
+ * The window's half of the same move - per-pixel alpha, and no longer answering
+ * the pointer - is done in Rust: `create` builds it transparent, `veil_selected`
+ * sets the pass-through once the clipboard has taken the image. Neither can be
+ * done from here.
+ *
+ * `currentRun` goes to zero, which is what stops every pointer and key handler
+ * in this file: there is nothing left to select, resize or copy.
+ */
+const enterConfirmation = (run: number, plan: ToastPlan): void => {
+  corners = null;
+  gesture = null;
+  before = null;
+  releaseCapture();
+  gesturePointer = null;
+  setCursor(null);
+  selection.hidden = true;
+  hint.hidden = true;
+  frame.hidden = true;
+  frame.removeAttribute('src');
+  currentRun = 0;
+
+  root.classList.add('is-confirmed');
+  showToast(plan);
+
+  if (plan.dwellMs === null) {
+    // Unreachable for a copy that worked, and not an assertion: a message that
+    // never leaves is a legitimate plan, and the veil would then wait for
+    // Escape rather than close itself.
+    return;
+  }
+
+  // A TIMER AND NOT `animationend`, deliberately. `.c-toast--transient` fades
+  // the message out on its own, from the same token this delay is read from, so
+  // the two agree by construction - but the window is what has to come down,
+  // and an animation event that never fires would leave a transparent,
+  // click-through, always-on-top window over the desktop. A timer in a visible
+  // page always runs.
+  //
+  // The delay is the dwell PLUS the fade, both from `tokens.css`: closing at the
+  // dwell alone would cut `c-toast-out` off at its first frame.
+  confirmationTimer = window.setTimeout(() => {
+    confirmationTimer = null;
+    void invoke('veil_confirmed', { run }).catch((error: unknown) => {
+      console.error('[cliche] veil: could not close the confirmation', error);
+    });
+  }, plan.dwellMs);
+};
+
 window.addEventListener('pointerdown', (event: PointerEvent) => {
+  // THE TOAST IS NOT THE VEIL, and this is checked FIRST - before the button
+  // and before `currentRun`. `.c-toast` sets `pointer-events: auto` inside a
+  // region that sets `none`, so the message really does receive the press that
+  // lands on it; without this line, pressing its dismiss button would also
+  // start drawing a rectangle underneath, and `hideToast` below would take the
+  // button out from under the finger before the `click` that follows.
+  //
+  // `contains` and not an identity check: the press lands on the <svg> or its
+  // <path>, never on the button itself.
+  if (event.target instanceof Node && toastRegion.contains(event.target)) {
+    return;
+  }
+
   // The primary button only: a right-click is not a selection. And nothing is
   // drawn when no capture is on screen, which is what `currentRun === 0` means.
   if (event.button !== 0 || currentRun === 0 || gesture !== null) {
@@ -620,7 +894,12 @@ window.addEventListener('pointerdown', (event: PointerEvent) => {
   // Stops WebView2 starting a native drag or a text selection under the hand.
   event.preventDefault();
 
-  clearNotice();
+  // The user is acting again, so the message about the last attempt has said
+  // what it had to say. A failure toast is dismissable by its own button too -
+  // components.css: "It leaves when it is dismissed" - and this is the second
+  // way out, for the far more common gesture of simply correcting the
+  // rectangle.
+  hideToast();
 
   const point = at(event);
   const zone =
