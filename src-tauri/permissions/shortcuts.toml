@@ -4,6 +4,11 @@
 # named `default` - is written once, in `veil.toml`.
 
 [[permission]]
+identifier = "allow-describe-shortcut-status"
+description = "Lets the main window read what the operating system ANSWERED when this application offered it the capture combination at startup: accepted, refused by the system with the reason it gave, or never attempted with what stopped it. Reads managed state written once in `setup`; it registers nothing, changes nothing and captures nothing. Granted to `main` only - it is what the launcher's shortcut reminder is drawn from, and the veil has no help page. Ungranted, the launcher falls back to saying the registry could not be read, which is what it wrongly said about every one of these cases until 6 September 2026."
+commands.allow = ["describe_shortcut_status"]
+
+[[permission]]
 identifier = "allow-describe-shortcuts"
 description = "Lets the main window read the shortcut registry: for each combination, its identifier, the accelerator Rust registers, the keys as they are drawn, a key into the string catalogue, and a category. Static data chosen by this application; it reads nothing from the machine and captures nothing. Granted to `main` only, not because the table is sensitive but because every command of this crate names the window it serves - see the note on `describe_displays` in displays.rs."
 commands.allow = ["describe_shortcuts"]

@@ -39,6 +39,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{
     Builder as GlobalShortcutBuilder, GlobalShortcutExt, ShortcutState,
@@ -84,7 +85,88 @@ pub(crate) fn report_due(run_number: usize) -> bool {
     run_number > 0 && run_number % RUNS_PER_REPORT == 0
 }
 
-/// The line printed when the shortcut could not be taken.
+/// The three answers this application can get about its capture shortcut, and
+/// the only three it will ever report.
+///
+/// # Why a type, and why THREE states
+///
+/// Until 6 September 2026 [`install`] returned `Result<(), String>` and `lib.rs`
+/// printed the error and dropped it. Nothing else in the process could ever
+/// learn what Windows had answered, so the launcher said "the shortcut registry
+/// could not be read" - a sentence that is false in every one of the cases
+/// below. What is on the screen has to be what happened.
+///
+/// Two states would not do either, and the difference is not academic: it
+/// decides what the user is TOLD. A combination Windows refused is a combination
+/// another program is holding, and the user can free it. A combination that was
+/// never offered - an unreadable accelerator, an entry missing from the
+/// registry, a plugin that failed to load - is a fault of this application, and
+/// telling that user to close another program would send them hunting for
+/// something that does not exist.
+///
+/// # The wire shape
+///
+/// Serialised internally tagged, so the frontend switches on one field. Each
+/// variant NAMES its tag rather than leaning on `rename_all`, so that the
+/// strings crossing to TypeScript are readable in this file and can be held
+/// against `src/shortcuts.ts` - which
+/// `the_three_wire_tags_are_the_ones_serde_is_told_to_emit_and_the_frontend_reads`
+/// does.
+///
+/// `Clone` because the command hands a copy to the webview; the value is
+/// managed state and there is exactly one of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "status")]
+pub enum ShortcutStatus {
+    /// The operating system took the combination. The shortcut works.
+    #[serde(rename = "accepted")]
+    Accepted {
+        /// The combination that was taken, in the plugin's syntax.
+        accelerator: &'static str,
+    },
+    /// The operating system refused the combination, with the reason it gave.
+    ///
+    /// The reason is the OS's own words, in English, and it is meant for the
+    /// terminal and the developer console - never for the screen. What the
+    /// screen says is decided in `src/shortcut-hint.ts`.
+    #[serde(rename = "refused-by-system")]
+    RefusedBySystem {
+        /// The combination that was refused. Named, so a user can free it.
+        accelerator: &'static str,
+        /// What the operating system answered, verbatim.
+        reason: String,
+    },
+    /// The combination was never offered to the operating system, and why.
+    ///
+    /// No `accelerator`: in the worst of these cases there is no entry to read
+    /// one from, and a field that is sometimes a guess is worse than no field.
+    #[serde(rename = "not-attempted")]
+    NotAttempted {
+        /// What stopped this application from even asking.
+        reason: String,
+    },
+}
+
+impl ShortcutStatus {
+    /// The line the terminal gets, or `None` when there is nothing to report.
+    ///
+    /// Pure, so its wording is under test, and returned rather than printed for
+    /// the reason [`install`] used to return one: the CALLER is what decides the
+    /// application keeps going, so the caller is where that decision should be
+    /// readable.
+    pub fn terminal_line(&self) -> Option<String> {
+        match self {
+            Self::Accepted { .. } => None,
+            Self::RefusedBySystem {
+                accelerator,
+                reason,
+            } => Some(registration_failure(accelerator, reason)),
+            Self::NotAttempted { reason } => Some(never_offered(reason)),
+        }
+    }
+}
+
+/// The line printed when the operating system REFUSED the combination.
 ///
 /// Pure, so its wording is under test. This message is the only thing standing
 /// between "another program already owns Ctrl+Shift+2" and an application that
@@ -101,25 +183,53 @@ fn registration_failure(accelerator: &str, reason: &str) -> String {
     )
 }
 
+/// The line printed when the combination was never offered at all.
+///
+/// A SEPARATE line from the one above, and that is the point of it. Until
+/// 6 September 2026 an unreadable accelerator and a plugin that failed to load
+/// both printed "another program is most likely holding that combination" -
+/// which sent whoever read it looking for a program that was not there. These
+/// three causes are ours; the message says so.
+fn never_offered(reason: &str) -> String {
+    format!(
+        "[cliche] shortcut: the capture shortcut was NEVER OFFERED to the system \
+         ({reason}). Cliche is running WITHOUT its capture shortcut - this one is a \
+         fault of the application itself, not a combination another program is holding."
+    )
+}
+
 /// Loads the plugin and binds the capture shortcut to the timing handler.
 ///
-/// Returns the ready-to-print failure line rather than printing it here: the
-/// caller is the one that decides the application keeps going, so the caller is
-/// where that decision should be readable.
-pub fn install(app: &AppHandle) -> Result<(), String> {
-    let entry = capture_entry()?;
+/// Returns WHAT HAPPENED rather than whether it worked. The three states of
+/// [`ShortcutStatus`] are the three answers this function can come back with,
+/// and every one of them ends up on the screen through
+/// `shortcuts::describe_shortcut_status`: this return value is no longer a line
+/// for the terminal, it is the fact the launcher draws.
+///
+/// Nothing is printed here, and nothing panics: the caller prints
+/// `status.terminal_line()` and puts the status into managed state.
+pub fn install(app: &AppHandle) -> ShortcutStatus {
+    let entry = match capture_entry() {
+        Ok(entry) => entry,
+        Err(reason) => return ShortcutStatus::NotAttempted { reason },
+    };
 
-    // Bound once so that all three ways this can fail name the SAME
-    // combination - the entry's, not a constant that could have moved.
-    let refused = |reason: &str| registration_failure(entry.accelerator, reason);
-
-    let shortcut = shortcuts::parse(entry).map_err(|reason| refused(&reason))?;
+    // Every branch below that gives up before the operating system is asked is
+    // `NotAttempted`: the combination was never offered, so nothing external
+    // refused it. Only `on_shortcut` can produce a refusal.
+    let shortcut = match shortcuts::parse(entry) {
+        Ok(shortcut) => shortcut,
+        Err(reason) => return ShortcutStatus::NotAttempted { reason },
+    };
 
     // The plugin is loaded here, next to its only use, rather than in the
     // builder chain: `install` then either wires the shortcut completely or
-    // fails with one message, and `lib.rs` has a single line to read.
-    app.plugin(GlobalShortcutBuilder::new().build())
-        .map_err(|error| refused(&format!("plugin failed to load: {error}")))?;
+    // says in one value why it did not, and `lib.rs` has a single line to read.
+    if let Err(error) = app.plugin(GlobalShortcutBuilder::new().build()) {
+        return ShortcutStatus::NotAttempted {
+            reason: format!("the global-shortcut plugin failed to load: {error}"),
+        };
+    }
 
     // Owned by the closure, which is `Fn`: an atomic is what lets it count
     // without `&mut`. `Relaxed` because this counter is only ever compared with
@@ -166,7 +276,15 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
             // report every twenty of those.
             crate::veil::perform_capture(app);
         })
-        .map_err(|error| refused(&error.to_string()))
+        .map_or_else(
+            |error| ShortcutStatus::RefusedBySystem {
+                accelerator: entry.accelerator,
+                reason: error.to_string(),
+            },
+            |()| ShortcutStatus::Accepted {
+                accelerator: entry.accelerator,
+            },
+        )
 }
 
 #[cfg(test)]
@@ -234,8 +352,17 @@ mod tests {
         // entry's own accelerator - and asserts against that same value rather
         // than against a second copy typed here. The three assertions are
         // unchanged.
+        //
+        // ADAPTED AGAIN on 6 September 2026: the line is now reached through
+        // the status that carries it, so this exercises what `lib.rs` prints
+        // rather than a function nothing calls.
         let entry = capture_entry().expect("the registry must hold the capture entry");
-        let message = registration_failure(entry.accelerator, "HotKey already registered");
+        let message = ShortcutStatus::RefusedBySystem {
+            accelerator: entry.accelerator,
+            reason: "HotKey already registered".to_owned(),
+        }
+        .terminal_line()
+        .expect("a refusal by the system has something to say");
 
         assert!(
             message.contains(entry.accelerator),
@@ -250,5 +377,118 @@ mod tests {
             "the message must say the app is running without its shortcut, not \
              just that something failed: {message}"
         );
+    }
+
+    #[test]
+    fn an_accepted_shortcut_has_nothing_to_print() {
+        // The silence is the report. A line on the happy path would train
+        // whoever runs this to skip the lines that matter.
+        assert_eq!(
+            ShortcutStatus::Accepted {
+                accelerator: "Ctrl+Shift+Digit2",
+            }
+            .terminal_line(),
+            None
+        );
+    }
+
+    #[test]
+    fn a_shortcut_that_was_never_offered_does_not_blame_another_program() {
+        // THE reason this state exists. Until 6 September 2026 an unreadable
+        // accelerator and a plugin that failed to load both printed "another
+        // program is most likely holding that combination", and whoever read it
+        // went looking for a program that was not there.
+        let message = ShortcutStatus::NotAttempted {
+            reason: "the global-shortcut plugin failed to load: no event loop".to_owned(),
+        }
+        .terminal_line()
+        .expect("a shortcut that was never offered has something to say");
+
+        assert!(
+            message.contains("no event loop"),
+            "the cause must survive into the message, or nobody can act on it: {message}"
+        );
+        assert!(
+            message.contains("NEVER OFFERED"),
+            "the message must say the system was never asked, which is what \
+             separates this state from a refusal: {message}"
+        );
+        assert!(
+            message.contains("WITHOUT"),
+            "the message must say the app is running without its shortcut: {message}"
+        );
+        assert!(
+            !message.contains("another program is most likely"),
+            "nothing external refused this combination; sending the user after \
+             another program is the defect this state was split out to end: {message}"
+        );
+    }
+
+    /// The tag serde is told to emit for a status, one arm per variant.
+    ///
+    /// Exhaustive on purpose: a fourth variant added to [`ShortcutStatus`] stops
+    /// this file compiling, which is the loudest way to be told that the
+    /// TypeScript union has to grow an arm too.
+    fn wire_tag(status: &ShortcutStatus) -> &'static str {
+        match status {
+            ShortcutStatus::Accepted { .. } => "accepted",
+            ShortcutStatus::RefusedBySystem { .. } => "refused-by-system",
+            ShortcutStatus::NotAttempted { .. } => "not-attempted",
+        }
+    }
+
+    #[test]
+    fn the_three_wire_tags_are_the_ones_serde_is_told_to_emit_and_the_frontend_reads() {
+        // WHAT THIS CHECKS, AND WHAT IT DOES NOT, because the difference is the
+        // whole honesty of it: it holds the `#[serde(rename = "…")]` attribute
+        // in THIS file against the literals `src/shortcuts.ts` switches on. It
+        // does NOT observe the JSON serde actually produces - this crate has no
+        // `serde_json` and lot 3 is not the place to buy one. What is verified
+        // is that the two sides name the same three strings; what is taken on
+        // serde's word is that `#[serde(tag = "status")]` puts them under the
+        // key `status`.
+        //
+        // Both files are read at compile time, so editing either one re-runs
+        // this test.
+        let rust = include_str!("shortcut.rs");
+        let typescript = include_str!("../../src/shortcuts.ts");
+
+        let statuses = [
+            ShortcutStatus::Accepted {
+                accelerator: "Ctrl+Shift+Digit2",
+            },
+            ShortcutStatus::RefusedBySystem {
+                accelerator: "Ctrl+Shift+Digit2",
+                reason: String::new(),
+            },
+            ShortcutStatus::NotAttempted {
+                reason: String::new(),
+            },
+        ];
+
+        for status in &statuses {
+            let tag = wire_tag(status);
+
+            assert!(
+                rust.contains(&format!("#[serde(rename = \"{tag}\")]")),
+                "no variant of ShortcutStatus is renamed to `{tag}`, so serde will not emit it"
+            );
+            assert!(
+                typescript.contains(&format!("'{tag}'")),
+                "src/shortcuts.ts does not switch on `{tag}`. Rust would send a status the \
+                 launcher cannot read, and TypeScript would not say so: the value crosses IPC \
+                 at run time"
+            );
+        }
+
+        // Without this, both searches above could be green because they match
+        // anything at all.
+        for absent in ["accepted-maybe", "refused", "not-attempted-yet"] {
+            assert!(
+                !rust.contains(&format!("#[serde(rename = \"{absent}\")]")),
+                "the search over this file's source matched `{absent}`, which no variant is \
+                 named: every assertion above is worthless"
+            );
+        }
     }
 }

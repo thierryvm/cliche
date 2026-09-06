@@ -8,13 +8,18 @@ pub mod clipboard;
 mod displays;
 pub mod geometry;
 pub mod ipc;
+mod launch;
 mod shortcut;
 mod shortcuts;
 pub mod timing;
 pub mod veil;
 
 pub use displays::{collect_displays, describe_displays, summarize, DisplayInfo};
-pub use shortcuts::{describe_shortcuts, ShortcutCategory, ShortcutEntry, REGISTRY};
+pub use launch::capture_region;
+pub use shortcut::ShortcutStatus;
+pub use shortcuts::{
+    describe_shortcut_status, describe_shortcuts, ShortcutCategory, ShortcutEntry, REGISTRY,
+};
 
 use displays::print_displays;
 use tauri::Manager;
@@ -61,6 +66,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             displays::describe_displays,
             shortcuts::describe_shortcuts,
+            shortcuts::describe_shortcut_status,
+            launch::capture_region,
             veil::veil_ready,
             veil::veil_decoded,
             veil::veil_painted,
@@ -113,13 +120,20 @@ pub fn run() {
                 eprintln!("{error}");
             }
 
-            if let Err(error) = shortcut::install(app.handle()) {
-                // Deliberately not `return Err(...)`: a combination the OS
-                // refuses must not stop the application. But it must not pass
-                // in silence either - Cliche would look perfectly fine and do
-                // nothing. The message says which shortcut, and why.
-                eprintln!("{error}");
+            // Deliberately not `return Err(...)` on a failure: a combination the
+            // OS refuses must not stop the application. But it must not pass in
+            // silence either - Cliche would look perfectly fine and do nothing.
+            //
+            // Two readers now, and that is the change of 6 September 2026. The
+            // terminal gets the line, as it always did. The STATUS is managed,
+            // so `describe_shortcut_status` can hand the launcher what actually
+            // happened instead of leaving it to say the registry could not be
+            // read - a sentence that was false in every one of the three cases.
+            let registration = shortcut::install(app.handle());
+            if let Some(line) = registration.terminal_line() {
+                eprintln!("{line}");
             }
+            app.manage(registration);
 
             // Measuring without touching the keyboard. `CLICHE_BENCH=20` runs
             // the very same `perform_capture` the shortcut calls; read
