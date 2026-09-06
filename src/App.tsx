@@ -1,8 +1,8 @@
 /*
  * The window: its chrome, and whichever screen the hash asks for.
  *
- * No router, and still none: three hashes, three screens. A router is a
- * dependency, and this application has three destinations.
+ * No router, and still none: four hashes, four screens. A router is a
+ * dependency, and this application has four destinations.
  *
  * `#/diagnostic` WENT on 6 September 2026. The monitor read-out is a section of
  * the help screen now, and a second door into it - one reachable only by typing
@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 
 import Help from './Help';
 import Launcher from './Launcher';
+import Settings from './Settings';
 import TitleBar from './TitleBar';
 import Showcase from './design/Showcase';
 
@@ -33,6 +34,18 @@ const SHOWCASE_ROUTE = '#/systeme';
  * with no way in is a screen that does not exist.
  */
 const HELP_ROUTE = '#/aide';
+
+/**
+ * The settings screen: the capture combination, and the control that changes it.
+ *
+ * Reached from the title bar, exactly like the help and for the same reason -
+ * the control there is what makes this route exist for somebody who is not
+ * reading this file. ASCII in the hash, deliberately: a fragment is part of a
+ * URL, and a non-ASCII one is liable to come back from `location.hash`
+ * percent-encoded while the literal it is compared against is not. Avoided
+ * rather than measured - « reglages » costs nothing and settles the question.
+ */
+const SETTINGS_ROUTE = '#/reglages';
 
 /** The name in the title bar. The product's NAME, so not in the catalogue. */
 const WINDOW_TITLE = 'Cliché';
@@ -60,6 +73,7 @@ export default function App() {
   }
 
   const onHelp = route === HELP_ROUTE;
+  const onSettings = route === SETTINGS_ROUTE;
 
   return (
     <div className="c-shell">
@@ -72,8 +86,18 @@ export default function App() {
           // fragment, which `useHashRoute` reads as the launcher.
           window.location.hash = onHelp ? '' : HELP_ROUTE;
         }}
+        settingsOpen={onSettings}
+        onToggleSettings={() => {
+          window.location.hash = onSettings ? '' : SETTINGS_ROUTE;
+        }}
       />
-      <div className="c-shell__body">{onHelp ? <Help /> : <Launcher />}</div>
+      {/* Two toggles, one body: pressing one while the other is up SWAPS the
+          screen rather than needing the first to be released. That falls out of
+          writing the hash - the control that is not pressed writes its own
+          route - and it is why neither needs to know about the other. */}
+      <div className="c-shell__body">
+        {onSettings ? <Settings /> : onHelp ? <Help /> : <Launcher />}
+      </div>
     </div>
   );
 }

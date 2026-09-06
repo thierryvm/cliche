@@ -9,6 +9,11 @@ description = "Lets the main window read what the operating system ANSWERED when
 commands.allow = ["describe_shortcut_status"]
 
 [[permission]]
+identifier = "allow-set-capture-shortcut"
+description = "Lets the main window CHANGE the combination that starts a capture. Added 6 September 2026 with the settings screen. It is the widest of the three shortcut commands by a distance: it takes a global hotkey away from the operating system - a combination every other application then stops receiving - and it writes one file, `settings.json`, in this application's own configuration folder. It reads nothing else from the machine and captures nothing. The combination is validated by `shortcuts::accept` before the system is asked: no bare key, no modifier this application cannot draw, no key it has no cap for. A combination the system refuses leaves the PREVIOUS one registered - `shortcut::change` is where that rollback lives and where it is tested. Granted to `main` only: the veil has no settings screen, and a full-screen sheet that could rebind the shortcut which produced it is not a thing anyone needs."
+commands.allow = ["set_capture_shortcut"]
+
+[[permission]]
 identifier = "allow-describe-shortcuts"
 description = "Lets the main window read the shortcut registry: for each combination, its identifier, the accelerator Rust registers, the keys as they are drawn, a key into the string catalogue, and a category. Static data chosen by this application; it reads nothing from the machine and captures nothing. Granted to `main` only, not because the table is sensitive but because every command of this crate names the window it serves - see the note on `describe_displays` in displays.rs."
 commands.allow = ["describe_shortcuts"]

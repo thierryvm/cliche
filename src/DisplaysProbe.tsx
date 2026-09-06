@@ -13,11 +13,23 @@
  * window that has no address bar, and two doors into one read-out is how the
  * two come to disagree.
  *
- * The wording is deliberately still English and deliberately NOT in
- * `src/strings.ts`: this is an engineering read-out, not interface prose. The
- * day somebody decides it should speak French, the sentences get decided in the
- * showcase first, like every other value in that catalogue - which is exactly
- * why moving this component into the help page did not translate it in passing.
+ * # IT SPOKE ENGLISH UNTIL 6 SEPTEMBER 2026
+ *
+ * This header used to argue that the wording belonged outside `src/strings.ts`
+ * because "this is an engineering read-out, not interface prose". That was true
+ * of a screen nobody but a developer could open, and it stopped being true the
+ * day the read-out landed inside the help page - in French, under a French
+ * heading, one block below the key map. A section in another language is not a
+ * technical read-out, it is a page somebody translated halfway.
+ *
+ * The same header named the way out, and it is the way that was taken: the
+ * sentences were decided in `src/design/Showcase.tsx` first (section
+ * `s-diagnostic`), then catalogued, then used here. Not one of them is typed in
+ * this file.
+ *
+ * What stays in its own language is the message the SYSTEM returns on a failure.
+ * That is a quotation - `xcap`'s own words, reaching this component through the
+ * command's `Err(String)` - and translating a quotation is inventing one.
  *
  * The outer `<main class="app">` that used to wrap this went with the launcher:
  * the padding is now `.c-shell__body`'s, and spending `--gutter` twice was the
@@ -29,6 +41,7 @@ import { useEffect, useState } from 'react';
 import { Glyph, ICON } from './design/Glyph';
 import { describeDisplays } from './displays';
 import type { DisplayInfo } from './displays';
+import { UI_STRINGS } from './strings';
 
 import './design/components.css';
 
@@ -74,34 +87,43 @@ export default function DisplaysProbe() {
 
   return (
     <section aria-labelledby="displays-heading">
-      <h2 id="displays-heading">Displays detected at startup</h2>
-      {probe.status === 'probing' && <p role="status">Reading the monitor list…</p>}
+      <h2 id="displays-heading">{UI_STRINGS.displaysHeading}</h2>
+      {probe.status === 'probing' && <p role="status">{UI_STRINGS.displaysReading}</p>}
 
       {/* PRD A4: the red is the THIRD cue, never the first. The word
-          "Failed" and the alert glyph carry the state on their own, which is
+          « Échec » and the alert glyph carry the state on their own, which is
           what .c-note--danger is built for — same component the showcase
-          publishes at #/systeme. A bare red sentence was colour alone. */}
+          publishes at #/systeme. A bare red sentence was colour alone.
+
+          `probe.message` is the only thing on this screen that is not French:
+          it is what the system answered, verbatim. See the header. */}
       {probe.status === 'failed' && (
         <div role="alert" className="c-note c-note--danger">
           <Glyph d={ICON.alert} />
           <span>
-            <strong>Failed</strong> — the monitor list could not be read: {probe.message}
+            <strong>{UI_STRINGS.failure}</strong>
+            {' — '}
+            {UI_STRINGS.displaysUnreadable} {probe.message}
           </span>
         </div>
       )}
 
       {probe.status === 'ready' && (
         <>
+          {/* Two labels and not one with a « (s) »: a parenthesis in an
+              interface is a sentence nobody finished writing. */}
           <p role="status">
-            {probe.displays.length} display{probe.displays.length === 1 ? '' : 's'}
+            {probe.displays.length}{' '}
+            {probe.displays.length === 1 ? UI_STRINGS.displayOne : UI_STRINGS.displayMany}
           </p>
           <ul className="displays">
             {probe.displays.map((display) => (
               <li key={`${display.name}@${display.x},${display.y}`} className="display">
-                <span className="display-name">{display.name || '(unnamed)'}</span>
+                <span className="display-name">{display.name || UI_STRINGS.displayUnnamed}</span>
                 <span className="display-facts">
-                  {display.width}×{display.height} physical px · origin ({display.x},{' '}
-                  {display.y}) · scale {display.scaleFactor}
+                  {display.width}×{display.height} {UI_STRINGS.displayPhysicalPixels} ·{' '}
+                  {UI_STRINGS.displayOrigin} ({display.x}, {display.y}) ·{' '}
+                  {UI_STRINGS.displayScale} {display.scaleFactor}
                 </span>
               </li>
             ))}
