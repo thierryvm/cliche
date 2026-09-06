@@ -17,22 +17,33 @@
  *      the one the maquette reserves - the honest cost of not inventing a
  *      shortcut, and the reasoning is in `src/shortcut-hint.ts`.
  *
- * WHAT THE PRIMARY TILE DOES TODAY: nothing. No command starts a capture from
- * a webview - `veil::perform_capture` is reached only from the global shortcut
- * handler (`src-tauri/src/shortcut.rs`), and `capabilities/default.json` grants
- * this window no capture command because none exists to grant. The tile is
- * drawn in its built state because it IS the built action; wiring it needs a
- * new Rust command, and that is the next lot. Said plainly here because a
- * button that looks pressable and is not is a defect, not a detail.
+ * WHAT THE PRIMARY TILE DOES, SINCE 6 SEPTEMBER 2026: it starts a capture, by
+ * the same `veil::perform_capture` the global shortcut runs - `capture_region`
+ * in `src-tauri/src/launch.rs`, granted to this window by
+ * `capabilities/default.json`. It used to reach nothing at all, which this
+ * header called a defect rather than a detail; it is one no longer.
+ *
+ * TWO THINGS THAT ARE STILL NOT DONE, said here because a screen that looks
+ * finished is where an unfinished thing hides:
+ *
+ *   - The capture the tile starts freezes the screen WITH THIS WINDOW IN IT.
+ *     Nothing hides Cliche first, and `launch.rs` explains why nothing does it
+ *     behind a decision that is not the code's to take.
+ *   - A `capture_region` that REJECTS - only ever a misconfigured ACL, since a
+ *     failure inside the pipeline never comes back this way - is written to the
+ *     console and to nothing else. The maquette has no wording for it, and this
+ *     file may not invent any: every sentence on this screen comes from
+ *     `src/strings.ts`, and every value there is the showcase's.
  */
 
 import { useEffect, useState } from 'react';
 
 import Keys from './Keys';
 import { Glyph, ICON } from './design/Glyph';
+import { captureRegion } from './launch';
 import { hintFor } from './shortcut-hint';
 import type { RegistryRead } from './shortcut-hint';
-import { describeShortcuts } from './shortcuts';
+import { describeShortcuts, describeShortcutStatus } from './shortcuts';
 import { UI_STRINGS } from './strings';
 
 import './design/components.css';
@@ -46,22 +57,53 @@ const BLOCK_GAP = { marginBlockStart: 'var(--space-5)' } as const;
  * U+00A0 and not a plain space: `.c-kbd.c-skeleton` paints its text out but
  * still measures it, and an ordinary whitespace child would collapse, leaving
  * a chip with no line box.
+ *
+ * It is the LITERAL character below, and it is invisible in this file. Rewriting
+ * this file on 6 September 2026 replaced it with an ordinary space in passing,
+ * and nothing in the suite could have said so - the chip would simply have lost
+ * its line box on a screen nobody was looking at. Checked from the outside, and
+ * this is the check to repeat after any edit of this line:
+ *   rg "RESERVED_CAP = '\x{00A0}';" src/Launcher.tsx
  */
 const RESERVED_CAP = ' ';
+
+/**
+ * The combination as the refusal note writes it: one string, not chips.
+ *
+ * The maquette draws it inside `.c-num` rather than with `Keys` there
+ * (`Showcase.tsx`, the `refused` branch) - a run of keycaps inside a sentence
+ * would break the line where the sentence should not break.
+ */
+function drawn(keys: readonly string[]): string {
+  return keys.join(' + ');
+}
 
 export default function Launcher() {
   const [read, setRead] = useState<RegistryRead>({ status: 'reading' });
 
   useEffect(() => {
-    // StrictMode runs effects twice in development, so `describe_shortcuts` is
-    // asked twice there. That is the dev double-render, not a bug.
+    // StrictMode runs effects twice in development, so both commands are asked
+    // twice there. That is the dev double-render, not a bug.
     let abandoned = false;
 
-    describeShortcuts().then(
-      (entries) => {
-        if (!abandoned) {
-          setRead({ status: 'read', entries });
+    // Both or neither: the reminder is drawn from the two together - what this
+    // application asked for, and what the system answered - and a screen that
+    // had one of them would have to guess the other.
+    Promise.all([describeShortcuts(), describeShortcutStatus()]).then(
+      ([entries, registration]) => {
+        if (abandoned) return;
+
+        if (registration.status !== 'accepted') {
+          // The reason is the operating system's own words, or this
+          // application's: English, technical, and useful to exactly one
+          // reader. The terminal has the same line from Rust; this puts it
+          // where a developer with only the webview open can see it too.
+          console.warn(
+            `[cliche] launcher: the capture shortcut is ${registration.status}`,
+            registration.reason,
+          );
         }
+        setRead({ status: 'read', entries, registration });
       },
       (error: unknown) => {
         if (!abandoned) {
@@ -92,7 +134,18 @@ export default function Launcher() {
         aria-label={UI_STRINGS.captureActions}
         style={BLOCK_GAP}
       >
-        <button type="button" className="c-launch__item c-launch__item--primary">
+        <button
+          type="button"
+          className="c-launch__item c-launch__item--primary"
+          onClick={() => {
+            // Not awaited: resolving means a capture was STARTED, and the veil
+            // takes the screen from here. Nothing on this screen changes on the
+            // way back, so there is no state to guard against a stale answer.
+            captureRegion().catch((error: unknown) => {
+              console.error('[cliche] launcher: the capture could not be started', error);
+            });
+          }}
+        >
           <Glyph d={ICON.capture} />
           <span className="c-launch__name">{UI_STRINGS.captureRegion}</span>
         </button>
@@ -130,7 +183,35 @@ export default function Launcher() {
         </p>
       )}
 
+      {/* The maquette's own note, word for word: the combination is NAMED, and
+          what the user can still do is said (PRD R4). It is drawn only when
+          Windows really refused - `shortcut-hint.ts` is what holds that line. */}
       {hint.state === 'refused' && (
+        <div className="c-note c-note--danger" role="alert" style={BLOCK_GAP}>
+          <Glyph d={ICON.alert} />
+          <span>
+            <strong>{UI_STRINGS.shortcutRefused}</strong>
+            {' — '}
+            <span className="c-num">{drawn(hint.keys)}</span> {UI_STRINGS.shortcutHeldByAnother}{' '}
+            {UI_STRINGS.shortcutMouseStillWorks}
+          </span>
+        </div>
+      )}
+
+      {/* No shortcut, and no combination anyone may be told was refused. The
+          second half of the note above is the half that is still true. */}
+      {hint.state === 'unavailable' && (
+        <div className="c-note c-note--danger" role="alert" style={BLOCK_GAP}>
+          <Glyph d={ICON.alert} />
+          <span>
+            <strong>{UI_STRINGS.shortcutUnavailable}</strong>
+            {' — '}
+            {UI_STRINGS.shortcutMouseStillWorks}
+          </span>
+        </div>
+      )}
+
+      {hint.state === 'unreadable' && (
         <div className="c-note c-note--danger" role="alert" style={BLOCK_GAP}>
           <Glyph d={ICON.alert} />
           <span>

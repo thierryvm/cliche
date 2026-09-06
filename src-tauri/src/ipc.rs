@@ -317,6 +317,36 @@ mod tests {
              so that an ungranted one reads as an oversight rather than a considered exception"
         );
 
+        assert!(
+            granted(&mut context, "describe_shortcut_status", MAIN_WINDOW_LABEL),
+            "`describe_shortcut_status` is invoked from src/shortcuts.ts, in the \
+             `{MAIN_WINDOW_LABEL}` window; without it the launcher cannot say what the operating \
+             system answered and falls back to claiming the registry could not be read"
+        );
+        assert!(
+            !granted(&mut context, "describe_shortcut_status", VEIL_WINDOW_LABEL),
+            "the veil draws no shortcut reminder; same rule as its neighbour above"
+        );
+
+        // ADDED ON 6 SEPTEMBER 2026, and the widest grant the main window
+        // holds: this one photographs the primary screen and raises a
+        // full-screen always-on-top sheet. The half that matters most is the
+        // second - the veil is what a capture PUTS on screen, and a
+        // `capture_region` from inside it would restart the pipeline over a
+        // screen that is already frozen, on a window whose console nobody can
+        // open.
+        assert!(
+            granted(&mut context, "capture_region", MAIN_WINDOW_LABEL),
+            "`capture_region` is invoked from src/launch.ts, in the `{MAIN_WINDOW_LABEL}` window; \
+             without it the launcher's headline tile is a button that reaches nothing - refused \
+             at run time, in release, with the message sent to a page nobody reads"
+        );
+        assert!(
+            !granted(&mut context, "capture_region", VEIL_WINDOW_LABEL),
+            "`capture_region` must NOT reach `{VEIL_WINDOW_LABEL}`: that window is already the \
+             result of a capture, and starting another from it would freeze a frozen screen"
+        );
+
         // Without this pair the whole test could be green because the resolver
         // says yes to everything.
         for window in [MAIN_WINDOW_LABEL, VEIL_WINDOW_LABEL] {

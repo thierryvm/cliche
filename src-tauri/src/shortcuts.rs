@@ -19,9 +19,14 @@
 //!   plugin, binds one handler on the plugin's hotkey thread, and must never
 //!   panic. Nothing there is reachable from a webview, and its header explains
 //!   at length why that matters.
-//! - `shortcuts.rs` (this file, plural) is the TABLE, plus the one command that
-//!   hands it to the main window. It is webview-facing, so it carries a
-//!   capability (`allow-describe-shortcuts`) and an `ipc::ensure_from` check.
+//! - `shortcuts.rs` (this file, plural) is the TABLE, plus the two commands that
+//!   hand the main window what it needs to talk about shortcuts: the table
+//!   itself, and - since 6 September 2026 - what the operating system ANSWERED
+//!   when `shortcut::install` offered it the capture combination. Both are
+//!   webview-facing, so each carries a capability (`allow-describe-shortcuts`,
+//!   `allow-describe-shortcut-status`) and an `ipc::ensure_from` check.
+//!   The status TYPE lives in `shortcut.rs`, next to the only function that can
+//!   produce one; this file is where it crosses to a webview.
 //!
 //! They were kept apart rather than merged for that last difference: declaring
 //! a command inside `shortcut.rs` would falsify the paragraph its header spends
@@ -31,10 +36,11 @@
 use std::str::FromStr;
 
 use serde::Serialize;
-use tauri::Webview;
+use tauri::{AppHandle, Manager, Webview};
 use tauri_plugin_global_shortcut::Shortcut;
 
 use crate::ipc;
+use crate::shortcut::ShortcutStatus;
 
 /// Where a shortcut belongs in the in-app help.
 ///
@@ -146,6 +152,50 @@ pub fn describe_shortcuts(webview: Webview) -> Result<Vec<ShortcutEntry>, String
     )?;
 
     Ok(REGISTRY.to_vec())
+}
+
+/// Hands the frontend what the operating system ANSWERED about the capture
+/// shortcut.
+///
+/// # This is the other half of [`describe_shortcuts`], and the two are not the
+/// # same fact
+///
+/// The registry above is a PROMISE: the combinations this application intends to
+/// hold. This command is what became of that promise on this machine, this
+/// launch - see [`crate::shortcut::ShortcutStatus`]. A launcher that reads only
+/// the registry can draw a combination nothing is listening for, which is the
+/// state Cliche shipped in until 6 September 2026.
+///
+/// The status is read from managed state rather than recomputed: registering a
+/// shortcut is something that happened ONCE, in `setup`, and asking again would
+/// answer about a second registration nobody performed.
+///
+/// `try_state` and not `state`, like everything else that runs on a webview IPC
+/// thread: `state` panics when the type was never managed, and an unmanaged
+/// status is a startup that went wrong, not a reason to take the application
+/// down. The error crosses to the page, which says the registry could not be
+/// read - which is exactly what happened.
+///
+/// **Main window only**, by capability AND in Rust, for the reason `displays.rs`
+/// gives: every command names the window it serves.
+#[tauri::command]
+pub fn describe_shortcut_status(
+    app: AppHandle,
+    webview: Webview,
+) -> Result<ShortcutStatus, String> {
+    ipc::ensure_from(
+        webview.label(),
+        ipc::MAIN_WINDOW_LABEL,
+        "describe_shortcut_status",
+    )?;
+
+    app.try_state::<ShortcutStatus>()
+        .map(|managed| managed.inner().clone())
+        .ok_or_else(|| {
+            "no shortcut status is managed, so nothing here knows what the system answered. \
+             `setup` in src-tauri/src/lib.rs is what puts it there."
+                .to_owned()
+        })
 }
 
 #[cfg(test)]

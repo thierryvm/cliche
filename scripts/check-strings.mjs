@@ -21,6 +21,28 @@
 //
 // No dependency, on purpose, like its two neighbours.
 //
+// WHAT THE COMPARISON IGNORES, SINCE 6 SEPTEMBER 2026, AND WHAT IT STILL DOES NOT
+//   Both checks compare on text whose LAYOUT has been collapsed: every run of
+//   ASCII spaces, tabs and newlines becomes one ordinary space, on BOTH sides.
+//   Without it a sentence the showcase wraps over three lines - the shortcut
+//   refusal note, src/design/Showcase.tsx:224-227 - could not be catalogued at
+//   all, because the catalogue holds it as one line and the source holds it as
+//   three. That is a defect of the INSTRUMENT, not of the wording.
+//
+//   It is a loosening of the COMPARISON and of nothing else. Check 1 still
+//   fails on a label the showcase does not publish, check 2 still fails on a
+//   label re-typed under src/, and neither now accepts a difference in
+//   characters:
+//     - a NON-BREAKING space is not layout and is left alone (`LAYOUT` below is
+//       ASCII-only, deliberately). French typography - « raccourci ; » - is part
+//       of the wording, and a catalogue that wrote U+0020 where the showcase
+//       wrote U+00A0 would still be caught;
+//     - a word wrapped MID-WORD is not joined: `a\nb` collapses to `a b`, never
+//       to `ab`;
+//     - line numbers in check 2's report stay true, because the collapser hands
+//       back the source offset of every character it emitted.
+//   `selfCheck` below puts all four of those to a sample whose answer is known.
+//
 // KNOWN BLIND SPOTS, stated so nobody trusts this past its reach:
 //   - French text that is NOT in the catalogue is invisible to check 2. This
 //     script proves there is one copy of each catalogued label; it cannot prove
@@ -49,6 +71,46 @@ const EXEMPT = [
 
 /** A letter, a digit or an underscore - what a word may be made of. */
 const WORDISH = /[\p{L}\p{N}_]/u;
+
+/**
+ * What a source file spends on lines and indentation, and nothing else.
+ *
+ * ASCII on purpose. `\s` in JavaScript also matches U+00A0 and the other Unicode
+ * spaces, and collapsing those would make this script blind to the difference
+ * between « raccourci ; » with a non-breaking space and the same sentence with
+ * an ordinary one - a difference the reader SEES, and exactly the kind of drift
+ * check 1 exists to catch.
+ */
+const LAYOUT = /[ \t\r\n\f\v]/;
+
+/**
+ * Reduces every run of layout whitespace to one ordinary space.
+ *
+ * Returns the collapsed text AND, for each of its characters, the offset it came
+ * from in `source`. That second half is not decoration: check 2 reports a line
+ * number, and a line number computed on collapsed text would point at line 1 for
+ * every finding in the file.
+ */
+function collapseLayout(source) {
+  let text = '';
+  const offsets = [];
+  let index = 0;
+
+  while (index < source.length) {
+    if (LAYOUT.test(source[index])) {
+      text += ' ';
+      offsets.push(index);
+      while (index < source.length && LAYOUT.test(source[index])) index += 1;
+      continue;
+    }
+
+    text += source[index];
+    offsets.push(index);
+    index += 1;
+  }
+
+  return { text, offsets };
+}
 
 /**
  * Decodes the one HTML entity that stands between JSX source and what a user
@@ -224,6 +286,30 @@ function selfCheck() {
   if (occurrences(asRendered("<span>Capturer tout l&apos;écran</span>"), "Capturer tout l'écran").length !== 1) {
     throw new Error('the entity decoder failed its own sample');
   }
+
+  // --- the layout collapser, in the four ways it could be wrong ---------------
+  const wrapped = collapseLayout('<span>\n            Cliché tourne\n            sans son raccourci.\n          </span>');
+  if (occurrences(wrapped.text, 'Cliché tourne sans son raccourci.').length !== 1) {
+    throw new Error(`the collapser cannot find a phrase the showcase wrapped: ${JSON.stringify(wrapped.text)}`);
+  }
+  if (occurrences(collapseLayout('a\nb').text, 'ab').length !== 0) {
+    throw new Error('the collapser JOINED two words: it is deleting the break, not reducing it');
+  }
+  // The sample below holds a LITERAL U+00A0 before its semicolon - invisible in
+  // this file, and deliberately so: it is the character French typography would
+  // put there, and it is held against a phrase written with an ordinary U+0020.
+  // The two must NOT match. Checked from the outside with
+  // `rg "collapseLayout\('raccourci\x{00A0}; les'\)" scripts/check-strings.mjs`.
+  if (occurrences(collapseLayout('raccourci ; les').text, 'raccourci ; les').length !== 0) {
+    throw new Error('the collapser turned a non-breaking space into an ordinary one, so French typography stopped being checked');
+  }
+
+  const lined = 'un\ndeux\ntrois quatre';
+  const collapsed = collapseLayout(lined);
+  const found = occurrences(collapsed.text, 'trois quatre')[0];
+  if (found === undefined || lineOf(lined, collapsed.offsets[found]) !== 3) {
+    throw new Error('the collapser lost the line numbers, so every finding below would point at the wrong line');
+  }
 }
 
 selfCheck();
@@ -237,10 +323,12 @@ if (catalogue.size === 0) {
 const failures = [];
 
 // --- 1. Every label is one the showcase already publishes. -------------------
-const showcase = asRendered(readFileSync(SHOWCASE, 'utf8'));
+// Compared on collapsed layout, on both sides: the showcase wraps its longer
+// sentences over several lines, and the catalogue holds each on one.
+const showcase = collapseLayout(asRendered(readFileSync(SHOWCASE, 'utf8'))).text;
 
 for (const [key, value] of catalogue) {
-  if (occurrences(showcase, value).length === 0) {
+  if (occurrences(showcase, collapseLayout(value).text).length === 0) {
     failures.push(
       `src/strings.ts: ${key} = ${JSON.stringify(value)} appears nowhere in ` +
         'src/design/Showcase.tsx.\n' +
@@ -255,12 +343,16 @@ for (const [key, value] of catalogue) {
 const files = scannedFiles(join(root, 'src'));
 
 for (const path of files) {
+  // Collapsed like the showcase above, so that a label re-typed across two
+  // lines - the shape this check would otherwise be blind to - is still found.
+  // `offsets` is what keeps the reported line number the one somebody can open.
   const source = withoutComments(asRendered(readFileSync(path, 'utf8')));
+  const { text, offsets } = collapseLayout(source);
 
   for (const [key, value] of catalogue) {
-    for (const at of occurrences(source, value)) {
+    for (const at of occurrences(text, collapseLayout(value).text)) {
       failures.push(
-        `${relative(root, path).replaceAll('\\', '/')}:${lineOf(source, at)}: ` +
+        `${relative(root, path).replaceAll('\\', '/')}:${lineOf(source, offsets[at])}: ` +
           `${JSON.stringify(value)} is written here AND in src/strings.ts.\n` +
           `        Import it instead: UI_STRINGS.${key}`,
       );

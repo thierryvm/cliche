@@ -23,9 +23,18 @@
  *   registered can be held against them. Splitting them off would put the
  *   label in one file and the fact it claims in another.
  * - Sentences the showcase assembles from several nodes - a bold lead, a
- *   dimension, a trailing clause. A fragment stored whole is a fragment that
- *   cannot be reordered in another language, and it is not what `check-strings`
- *   could hold against the showcase either.
+ *   dimension, a trailing clause - stored WHOLE. A sentence stored whole is a
+ *   sentence that cannot be reordered in another language.
+ *
+ *   AMENDED ON 6 SEPTEMBER 2026, because the rule as written also forbade the
+ *   pieces, and that is not what it is for. `shortcutHeldByAnother` and
+ *   `shortcutMouseStillWorks` are two such pieces, catalogued one node each:
+ *   the launcher has to SAY the refusal now that Rust reports it, and a
+ *   sentence typed into a component is exactly the copy check 2 exists to
+ *   refuse. They are kept apart rather than joined because they are not equally
+ *   true: the first names a cause only Windows can confirm, the second holds
+ *   whenever there is no shortcut at all. `src/shortcut-hint.ts` decides which
+ *   of the two the screen is entitled to show.
  *
  * `as const` for the reason the showcase states: `noUncheckedIndexedAccess`
  * turns an indexed read of a plain `Record<string, string>` into
@@ -42,10 +51,16 @@ export const UI_STRINGS = {
   captureFullScreen: "Capturer tout l'écran",
   comingSoon: 'à venir',
 
-  /* What the capture shortcut is doing, in the three states it can be in. */
+  /* What the capture shortcut is doing, in the states it can be in. */
   shortcutHint: 'capture une zone, même quand Cliché est en arrière-plan.',
   shortcutLoading: 'lecture du registre des raccourcis…',
   shortcutRefused: 'Raccourci refusé',
+  /* The two halves of the refusal note, catalogued APART - see the header. The
+     first names a cause only Windows can confirm; the second is true whenever
+     there is no shortcut, whatever the reason. Kept each on ONE line because
+     `scripts/check-strings.mjs` reads one pair per line. */
+  shortcutHeldByAnother: 'est tenu par une autre application.',
+  shortcutMouseStillWorks: 'Cliché tourne sans son raccourci ; les trois actions ci-dessus restent utilisables à la souris.',
 
   /* The custom title bar. Drawn by this application, so named by it too. */
   windowMinimize: 'Réduire',

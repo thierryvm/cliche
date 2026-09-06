@@ -1,0 +1,9 @@
+# Application permission for the command the launcher's headline tile calls.
+#
+# The reasoning for this whole directory - what it arms, and why nothing here is
+# named `default` - is written once, in `veil.toml`.
+
+[[permission]]
+identifier = "allow-capture-region"
+description = "Lets the main window START A CAPTURE: the same `veil::perform_capture` the global shortcut runs, reached from the launcher's headline tile instead of from Ctrl + Maj + 2. This is the widest thing the main window may ask for - it photographs the primary screen into this process's memory and raises a full-screen, always-on-top sheet over the desktop - and it is granted here because a home screen whose main action does nothing is the defect this replaces. It is NOT granted to the veil: that window is what a capture puts on screen, and restarting the pipeline from inside it would freeze a screen that is already frozen. `launch.rs` refuses that a second time in Rust."
+commands.allow = ["capture_region"]
