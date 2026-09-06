@@ -5,7 +5,10 @@
 
 /*
  * The document's base layer: what an element is worth before any component
- * class touches it, plus the monitor read-out of the diagnostic screen. Every
+ * class touches it, plus the monitor read-out - which is the diagnostic section
+ * of the help screen since 6 September 2026, and no longer a screen of its
+ * own. `.displays` and `.display*` below are its rules, wherever it is
+ * mounted; that move changed the markup's parent and none of its classes. Every
  * value below is a var(--…): there is no bare rem, no bare weight and no bare
  * opacity left in this file, because a number typed here is a number the token
  * file cannot theme and check-contrast.mjs cannot measure.

@@ -505,6 +505,15 @@ pub struct CopiedSize {
 ///
 /// `why` is named in both failure lines: a hide that did not happen is worth
 /// nothing to a reader who cannot tell which capture it belonged to.
+///
+/// **It is also where the MAIN window comes back**, since 6 September 2026.
+/// Every caller here is a capture ENDING, and a capture started from the
+/// launcher tile hid the main window before it began
+/// (`launch::capture_region`). Putting the restore at this one door is what
+/// makes the confirmation, Escape and a frame the page was never handed all
+/// behave the same. On the shortcut path nothing was ever hidden, so
+/// `restore_main_window` reads one atomic and returns - see
+/// `launch::should_restore`, which is the rule, and which is under test.
 fn hide_veil(window: &WebviewWindow, why: &str) {
     if let Err(error) = window.set_ignore_cursor_events(false) {
         eprintln!(
@@ -515,6 +524,8 @@ fn hide_veil(window: &WebviewWindow, why: &str) {
     if let Err(error) = window.hide() {
         eprintln!("[cliche] veil: could not hide the veil after {why}: {error}");
     }
+
+    crate::launch::restore_main_window(window.app_handle());
 }
 
 /// Builds the veil window, HIDDEN, sized to the primary monitor.
@@ -659,6 +670,12 @@ pub fn perform_capture(app: &AppHandle) {
         Err(error) => {
             eprintln!("[cliche] veil: capture failed: {error}");
             timings.abandon_run();
+            // No veil will ever be shown for this run, so nothing downstream
+            // would put the main window back. On the tile path it is off the
+            // screen RIGHT NOW: without this line, a failed capture is an
+            // application that vanished. `hide_veil` is not called here because
+            // there is nothing to hide - the veil was never touched.
+            crate::launch::restore_main_window(app);
             return;
         }
     };
@@ -678,6 +695,9 @@ pub fn perform_capture(app: &AppHandle) {
             Err(error) => {
                 eprintln!("[cliche] veil: BMP failed: {error}");
                 timings.abandon_run();
+                // Same reason as the capture failure above: no veil, so no
+                // other path would give the main window back.
+                crate::launch::restore_main_window(app);
                 return;
             }
         },
@@ -692,6 +712,8 @@ pub fn perform_capture(app: &AppHandle) {
             Err(error) => {
                 eprintln!("[cliche] veil: PNG failed: {error}");
                 timings.abandon_run();
+                // Same reason as the two above.
+                crate::launch::restore_main_window(app);
                 return;
             }
         },
@@ -855,6 +877,9 @@ fn arm_show_fallback(app: &AppHandle, run: u64) {
                 timings.abandon_run();
             }
             veil.release(run);
+            // Nothing is on screen and nothing else will run for this capture;
+            // on the tile path the main window is still hidden.
+            crate::launch::restore_main_window(&app);
             return;
         };
 
@@ -864,6 +889,9 @@ fn arm_show_fallback(app: &AppHandle, run: u64) {
                 timings.abandon_run();
             }
             veil.release(run);
+            // Same as just above: the last path that could have shown anything
+            // has failed, so this is the last chance to give the window back.
+            crate::launch::restore_main_window(&app);
             return;
         }
         // Same reason as on the acknowledged path: without focus, Escape never
@@ -1218,6 +1246,9 @@ pub fn veil_decoded(app: AppHandle, webview: Webview, run: u64) {
             timings.abandon_run();
         }
         veil.release(run);
+        // And the main window, if the tile path took it away: this run ends
+        // here, with nothing on screen at all.
+        crate::launch::restore_main_window(&app);
         return;
     };
 
@@ -1239,6 +1270,9 @@ pub fn veil_decoded(app: AppHandle, webview: Webview, run: u64) {
         // payload has no reader now, and 8.29 MB of the user's screen must not
         // outlive the capture that took it.
         veil.release(run);
+        // The veil never became visible, so nothing will hide it and nothing
+        // else would hand the main window back.
+        crate::launch::restore_main_window(&app);
         return;
     }
     if let Err(error) = window.set_focus() {

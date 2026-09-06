@@ -23,12 +23,16 @@
  * `capabilities/default.json`. It used to reach nothing at all, which this
  * header called a defect rather than a detail; it is one no longer.
  *
- * TWO THINGS THAT ARE STILL NOT DONE, said here because a screen that looks
+ * AND SINCE THE SAME DAY IT HIDES THIS WINDOW FIRST. The frame used to be
+ * frozen with Cliche in it - glass, title bar, and the tile still lit by the
+ * pointer over whatever the user actually wanted. `launch.rs` now hides the
+ * window, waits for Windows to repaint the desktop without it, captures, and
+ * puts the window back when the veil ends. None of that is visible from here:
+ * `captureRegion()` resolves before any of it has happened.
+ *
+ * ONE THING THAT IS STILL NOT DONE, said here because a screen that looks
  * finished is where an unfinished thing hides:
  *
- *   - The capture the tile starts freezes the screen WITH THIS WINDOW IN IT.
- *     Nothing hides Cliche first, and `launch.rs` explains why nothing does it
- *     behind a decision that is not the code's to take.
  *   - A `capture_region` that REJECTS - only ever a misconfigured ACL, since a
  *     failure inside the pipeline never comes back this way - is written to the
  *     console and to nothing else. The maquette has no wording for it, and this

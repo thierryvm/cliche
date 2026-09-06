@@ -3,11 +3,16 @@
  *
  * No router, and still none: three hashes, three screens. A router is a
  * dependency, and this application has three destinations.
+ *
+ * `#/diagnostic` WENT on 6 September 2026. The monitor read-out is a section of
+ * the help screen now, and a second door into it - one reachable only by typing
+ * a URL into a window that has no address bar - was a way for the two to drift
+ * apart.
  */
 
 import { useEffect, useState } from 'react';
 
-import DisplaysProbe from './DisplaysProbe';
+import Help from './Help';
 import Launcher from './Launcher';
 import TitleBar from './TitleBar';
 import Showcase from './design/Showcase';
@@ -21,12 +26,13 @@ import './design/components.css';
 const SHOWCASE_ROUTE = '#/systeme';
 
 /**
- * The monitor read-out, on its way to the help page.
+ * The help screen: the shortcut registry, and the monitor read-out under it.
  *
- * A route rather than a component nobody mounts: an unmounted diagnostic is a
- * diagnostic that stops working in silence. See the header of `DisplaysProbe`.
+ * Reached from the title bar and from nowhere else - the control there is what
+ * makes this route exist for somebody who is not reading this file. A screen
+ * with no way in is a screen that does not exist.
  */
-const DIAGNOSTIC_ROUTE = '#/diagnostic';
+const HELP_ROUTE = '#/aide';
 
 /** The name in the title bar. The product's NAME, so not in the catalogue. */
 const WINDOW_TITLE = 'Cliché';
@@ -53,12 +59,21 @@ export default function App() {
     return <Showcase />;
   }
 
+  const onHelp = route === HELP_ROUTE;
+
   return (
     <div className="c-shell">
-      <TitleBar title={WINDOW_TITLE} />
-      <div className="c-shell__body">
-        {route === DIAGNOSTIC_ROUTE ? <DisplaysProbe /> : <Launcher />}
-      </div>
+      <TitleBar
+        title={WINDOW_TITLE}
+        helpOpen={onHelp}
+        onToggleHelp={() => {
+          // The hash IS the state, so the browser's own back button keeps
+          // working and the screen survives a reload. Writing '' clears the
+          // fragment, which `useHashRoute` reads as the launcher.
+          window.location.hash = onHelp ? '' : HELP_ROUTE;
+        }}
+      />
+      <div className="c-shell__body">{onHelp ? <Help /> : <Launcher />}</div>
     </div>
   );
 }

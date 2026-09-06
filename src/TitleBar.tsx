@@ -78,8 +78,35 @@ function report(what: string): (error: unknown) => void {
   };
 }
 
-/** The window's chrome: its name, and the three controls a window has. */
-export default function TitleBar({ title }: { readonly title: string }) {
+type TitleBarProps = {
+  readonly title: string;
+  /** Whether the help screen is the one on show. Drawn as `aria-pressed`. */
+  readonly helpOpen: boolean;
+  /** Asked to swap between the launcher and the help. */
+  readonly onToggleHelp: () => void;
+};
+
+/**
+ * The window's chrome: its name, the way into the help, and the three controls
+ * a window has.
+ *
+ * # THE HELP CONTROL IS A TOGGLE, and that is what gives the screen a way BACK
+ *
+ * Added 6 September 2026. It is `aria-pressed`, not a link: pressed while the
+ * help is up, and pressing it again returns to the launcher. A one-way button
+ * would have needed a second control - « retour » - and the design system
+ * publishes no wording for one. This shape needs a single word for both
+ * directions, and the state is carried by a mechanism the material layer
+ * already dresses (`.c-btn[aria-pressed='true']`, the inset accent bar, which
+ * `Showcase.tsx` publishes as « outil actif »).
+ *
+ * It sits inside `.c-titlebar__controls` because that is the one part of the bar
+ * that is `app-region: no-drag`; anywhere else the press would move the window.
+ * It carries no `data-tauri-drag-region`, which is what stops Tauri's own drag
+ * script from treating it as a handle - the same rule the three window controls
+ * rely on, read in `tauri-2.11.5/src/window/scripts/drag.js:57-58`.
+ */
+export default function TitleBar({ title, helpOpen, onToggleHelp }: TitleBarProps) {
   // Starts at `false` and is corrected by the first probe below. The starting
   // value is a guess and is treated as one - it is why the effect probes on
   // mount rather than only on the first resize.
@@ -127,6 +154,15 @@ export default function TitleBar({ title }: { readonly title: string }) {
     <div className="c-titlebar" data-tauri-drag-region="deep">
       <p className="c-titlebar__title">{title}</p>
       <div className="c-titlebar__controls">
+        <button
+          type="button"
+          className="c-btn c-btn--ghost c-btn--icon c-winbtn"
+          aria-label={UI_STRINGS.helpTitle}
+          aria-pressed={helpOpen}
+          onClick={onToggleHelp}
+        >
+          <Glyph d={ICON.info} />
+        </button>
         <button
           type="button"
           className="c-btn c-btn--ghost c-btn--icon c-winbtn"
