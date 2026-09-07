@@ -9,6 +9,7 @@ mod displays;
 pub mod geometry;
 pub mod ipc;
 mod launch;
+mod lifecycle;
 mod settings;
 mod shortcut;
 mod shortcuts;
@@ -24,12 +25,65 @@ pub use shortcuts::{
 };
 
 use displays::print_displays;
-use tauri::Manager;
+use tauri::{Manager, WindowEvent};
 use timing::Timings;
 
 /// Builds and runs the application. Returns only when the app exits.
 pub fn run() {
     let result = tauri::Builder::default()
+        // FIRST, and that is a requirement rather than a preference: "The Single
+        // Instance plugin must be the first one to be registered to work well.
+        // This assures that it runs before other plugins can interfere"
+        // (v2.tauri.app/plugin/single-instance, read on 7 September 2026 - the
+        // documentation page, NOT the plugin's own source, which could not be
+        // opened here). `lifecycle.rs` keeps it in this position.
+        //
+        // WHAT IT BUYS is the second half of the ghost process of 7 September
+        // 2026. A user whose first Cliche is invisible does the one thing left
+        // to them - launch it again - and until today the second process went
+        // and asked Windows for Ctrl + Maj + 2, which the first one was still
+        // holding. The red banner it then showed was true and useless: the other
+        // application WAS Cliche. Now the second process hands the screen back
+        // and stops.
+        //
+        // The callback runs in the FIRST process. Nothing of this plugin is
+        // reachable from a webview - it declares no command and ships no
+        // JavaScript API - so no capability grants it anything and
+        // `src-tauri/permissions/` gains no file; `Cargo.toml` has the reading
+        // that settles it, and `ipc.rs`'s sentinel finds nothing new in this
+        // crate's own handler list.
+        .plugin(tauri_plugin_single_instance::init(
+            |app, _arguments, _directory| {
+                // The RULE is `lifecycle::raise_main_window`, deliberately not
+                // this closure: a callback that needs a second process to exist
+                // can never be run by `cargo test`.
+                lifecycle::raise_main_window(app);
+            },
+        ))
+        // CLOSING THE MAIN WINDOW ENDS CLICHE, and until 7 September 2026 no
+        // handler was installed here at all - which is how the process came to
+        // outlive its own window. `lifecycle.rs` holds the reading of
+        // `tauri-runtime-wry` that explains why nothing else was ever going to
+        // request an exit, and both halves of the rule are under test there:
+        // `main` ends it, `veil` does not.
+        //
+        // `exit(0)` and not `std::process::exit`: it goes through
+        // `RunEvent::ExitRequested` and `RunEvent::Exit` (the documented
+        // behaviour of `AppHandle::exit`, read on docs.rs/tauri/2.11.5 on
+        // 7 September 2026). A raw process exit would skip both; what the
+        // loaded plugins do in them has not been read here, and skipping a
+        // teardown to save nothing is not a trade worth making when the resource
+        // at stake is the global hotkey this whole fix is about.
+        //
+        // The event is not prevented and the veil is not touched: it is a window
+        // of this process, and it goes when the process goes.
+        .on_window_event(|window, event| {
+            if matches!(event, WindowEvent::CloseRequested { .. })
+                && lifecycle::closing_ends_the_application(window.label())
+            {
+                window.app_handle().exit(0);
+            }
+        })
         // Registered so that `clipboard::copy_selection` finds a `Clipboard` in
         // managed state. This adds NO capability: the plugin's commands DO go
         // through the ACL (`plugin_command.is_some()` in

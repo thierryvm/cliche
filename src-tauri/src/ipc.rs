@@ -79,8 +79,14 @@
 
 /// Label of the main window, as declared in `tauri.conf.json`.
 ///
-/// One constant so the config and the guard cannot drift apart.
-pub const MAIN_WINDOW_LABEL: &str = "main";
+/// One constant so the config and the guard cannot drift apart - and since
+/// 7 September 2026 that constant lives in [`crate::lifecycle`], because it
+/// stopped being an IPC fact that day: the same label now also decides which
+/// window's closing ends the process and which window a second launch brings
+/// back. It is re-exported here, rather than moved away, so that every caller
+/// and every test written against `ipc::MAIN_WINDOW_LABEL` goes on reading the
+/// one value. `lifecycle.rs` is where it is held against `tauri.conf.json`.
+pub use crate::lifecycle::MAIN_WINDOW_LABEL;
 
 /// The line a refused call produces.
 ///
