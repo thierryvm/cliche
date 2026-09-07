@@ -124,6 +124,60 @@
 }
 
 /* ==================================================================== *
+ * THE `hidden` ATTRIBUTE, ENFORCED — added 7 September 2026, against a
+ * defect this file caused and nobody could see in a code review.
+ *
+ * WHAT WENT WRONG. `[hidden] { display: none }` lives in the BROWSER's
+ * stylesheet, and every author declaration beats a UA declaration
+ * whatever their specificity — that is the cascade's origin order, not a
+ * specificity accident. This file declares `display` on `.c-btn`
+ * (inline-flex) and on `.c-toast-region` (flex). So an element wearing
+ * BOTH the attribute and one of those classes was rendered, in full, by
+ * this file, while its markup said it was not there.
+ *
+ * WHAT IT LOOKED LIKE. The veil's confirmation is parsed with `hidden`
+ * and shown only once a selection has been judged. Instead it was
+ * painted from the moment the veil appeared: an EMPTY 416 x 53 px box at
+ * the foot of the screen — 416 px is `--c-toast-max` below, to the pixel
+ * — carrying a grey × that was the dismiss button, also `hidden`, also
+ * rendered by `.c-btn`. Both text spans stayed correctly invisible
+ * (`.c-num` and `<strong>` declare no `display`), and the two glyphs are
+ * hidden by a tone-class rule, so the box had nothing in it at all.
+ * Thierry met it on 7 September 2026 on the installed v0.1.0 and
+ * described it twice: "un long rectangle noir tout en bas" during a
+ * selection (dark theme, `--surface-raised`), and a white one with a
+ * faint cross after it. Reproduced in a browser at 1920x1080 in both
+ * themes before this rule was written.
+ *
+ * WHY `!important` AND NOT `.c-toast-region[hidden]`. Naming the two
+ * offenders repairs today and rearms the trap: the next component that
+ * declares `display` brings it straight back, silently, and the failure
+ * mode is an element that is visible when the markup says it is gone.
+ * `hidden` is not a layout hint, it is the author stating the element is
+ * not there; nothing about laying it out should be able to outvote that.
+ * `veil.html` reasons about this trap element by element for its OWN
+ * inline styles (`#frame[hidden]`, and the comment under `.veil-rect`
+ * that says a bare `hidden` "does its job unaided"). That reasoning was
+ * sound and still missed this, because the offending declarations are in
+ * THIS file, which that document links afterwards. One rule here is what
+ * closes it for both consumers.
+ *
+ * KNOWN LIMIT, stated rather than discovered later: this also flattens
+ * `hidden="until-found"`, whose whole point is to stay laid out for
+ * find-in-page. Nothing in this product uses it, and it has not been
+ * tried in WebView2. The day one appears, this selector needs
+ * `:not([hidden='until-found'])` — and that day is the right one to
+ * measure it, not today.
+ *
+ * `scripts/check-hidden.mjs` fails if this rule leaves, and names the
+ * elements that go back to being visible when it does.
+ * ==================================================================== */
+
+[hidden] {
+  display: none !important;
+}
+
+/* ==================================================================== *
  * FOCUS — ONE rule for the whole file (PRD A2).
  * `.is-focus` is a showcase-only class and sits in the SAME rule as
  * :focus-visible on purpose: the specimen cannot drift from the real
