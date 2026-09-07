@@ -135,6 +135,31 @@ et deux tuiles grises marquées « à venir ».
 > 🔴 Si la fenêtre ne s'ouvre pas du tout, ou se ferme aussitôt : note le
 > message exact. C'est le défaut le plus grave possible ici.
 
+#### 👀 La ligne du raccourci, sous les tuiles — le correctif du 7 septembre après-midi
+
+**Attendu** : la combinaison **`Ctrl` + `Maj` + `2`** dessinée en touches de clavier.
+
+Pendant une fraction de seconde au tout premier affichage tu peux voir une
+touche **grise et vide** à la place : c'est normal, c'est le lanceur qui attend
+la réponse du démarrage. Elle doit se remplir toute seule.
+
+> 🔴 **Ce qui serait un défaut** : un bandeau rouge « Échec — Le registre des
+> raccourcis n'a pas pu être lu **: …** » **qui reste**. Recopie-le **en entier,
+> avec ce qui suit les deux-points** — c'est la raison technique, et c'est
+> précisément ce qui manquait le 7 septembre à midi pour comprendre sans moi.
+
+**Ce qui s'est passé, et ce que ça change.** Sur le binaire du matin, ce bandeau
+rouge s'affichait alors que le raccourci fonctionnait. Cause : Tauri construit
+la fenêtre principale **avant** que le code de démarrage de Cliché ne tourne
+(`tauri-2.11.5/src/app.rs:2521-2535`), donc l'écran demandait l'état du
+raccourci pendant que Cliché était encore en train de démarrer — et cet état
+n'était posé qu'à la toute dernière ligne du démarrage, après la construction
+d'une seconde fenêtre. L'état existe maintenant dès la **première** instruction,
+et l'écran sait attendre au lieu de conclure à un échec.
+
+**Ce qui n'est pas prouvé** : que ça suffise sur ta machine. Personne n'a lancé
+l'application. C'est cette ligne, sur ton écran, qui tranche.
+
 **Ce que ces onglets remplacent, et ce qu'il faut vérifier.** Jusqu'au
 7 septembre 2026 il n'y avait que deux boutons ronds, ⓘ et ⚙, et rien ne disait
 comment revenir : depuis l'Aide, il fallait re-cliquer le bouton déjà enfoncé.
@@ -371,8 +396,16 @@ attendent le prochain installeur.
   fenêtre Tauri, seulement en navigateur. Le déplacement de la fenêtre par la
   barre et l'absence de déplacement en cliquant un onglet reposent sur un
   raisonnement lu dans le script de Tauri, jamais observé.
-- **La plaque d'aide du voile** n'a été vue qu'en navigateur, en la démasquant à
-  la main. Personne ne l'a vue apparaître au bon moment dans une vraie capture.
+- **La plaque d'aide du voile** : OBSERVÉE par Thierry le 7 septembre 2026 à
+  14 h 24 — centrée, en français, pendant une vraie sélection. Ce point est clos.
+- **Que la course du démarrage soit vraiment fermée.** Le correctif de
+  l'après-midi pose l'état dès la première instruction du démarrage, et l'écran
+  re-demande tant que la réponse dit « pas encore ». Rien de tout cela n'a été
+  vu tourner : aucun test de ce dépôt ne peut lancer le démarrage de Tauri, il
+  faut une boucle d'événements. La ligne du raccourci au geste 1 est le seul juge.
+- **Les deux chiffres de la relance** (un quart de seconde entre deux essais,
+  douze essais au plus, soit au moins trois secondes) sont raisonnés, pas
+  mesurés : personne n'a chronométré combien de temps ce démarrage met à décider.
 - **Le binaire n'est pas signé** : SmartScreen avertira, chez toi comme chez
   n'importe qui d'autre.
 - **Le budget de latence après le passage en fenêtre transparente** — section 6.
