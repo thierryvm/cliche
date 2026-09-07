@@ -72,6 +72,22 @@ jobs:
       - name: One place for every label
         run: node scripts/check-strings.mjs
 
+      # Fourth of the family, and IT WAS MISSING FROM THIS FILE until 7
+      # September 2026 - added to `pnpm test` when it was written and never
+      # here, which is precisely the failure the comment under the Vitest step
+      # describes. It had therefore never run in CI at all. Nothing was found
+      # broken when it finally did; that is luck, not a reason to leave it out.
+      - name: One list of icon paths
+        run: node scripts/check-icons.mjs
+
+      # Fifth: two files that are each correct on their own and wrong together.
+      # `[hidden]` lives in the browser's stylesheet and loses to any author
+      # `display`, so components.css was rendering the veil's confirmation while
+      # its markup said it was not there - an empty box over every capture on
+      # the installed v0.1.0. The script's header has the whole reading.
+      - name: The hidden attribute actually hides
+        run: node scripts/check-hidden.mjs
+
       - name: TypeScript - strict, zero any
         run: pnpm typecheck
 

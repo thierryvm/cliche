@@ -180,6 +180,14 @@
         pointer-events: none;
       }
 
+      /* REDUNDANT SINCE 7 SEPTEMBER 2026, and kept anyway. `display: block`
+         above beats the browser's own `[hidden] { display: none }` - author
+         declarations win over UA ones whatever their specificity - so this
+         element needed a rule of its own. It no longer does: components.css,
+         linked above, now carries `[hidden] { display: none !important }` for
+         the whole product. This one stays because it makes THIS document
+         readable on its own: the frame's rule sits next to the frame's
+         `display`, where the next person edits it. */
       #frame[hidden] {
         display: none;
       }
@@ -292,9 +300,18 @@
             0 0 0 100vmax var(--veil-scrim);
         /* The rectangle must not intercept the drag that is drawing it. */
         pointer-events: none;
-        /* No `display` declared here on purpose, so the UA's
-           `[hidden] { display: none }` does its job unaided - unlike #frame
-           above, which needs its own rule because it declares `display: block`. */
+        /* No `display` declared here on purpose, so nothing of this document's
+           own has to hold `hidden` up for it.
+
+           THAT REASONING WAS SOUND AND STILL LET A DEFECT THROUGH, which is
+           worth writing down where it was made. It only ever looked at THIS
+           document's declarations. components.css is linked above and declares
+           `display` on `.c-toast-region` and on `.c-btn` - so the confirmation
+           and its dismiss button, both parsed with `hidden`, were painted from
+           the moment the veil appeared: an empty box at the foot of every
+           capture, met on the installed v0.1.0 on 7 September 2026. The guard
+           now lives in components.css, next to the declarations that caused it,
+           and `scripts/check-hidden.mjs` fails if it leaves. */
       }
 
       /*
