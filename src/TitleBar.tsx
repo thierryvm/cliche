@@ -44,6 +44,7 @@ import type { Window as TauriWindow } from '@tauri-apps/api/window';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
 import { Glyph, ICON } from './design/Glyph';
+import type { ScreenTab } from './screen-tabs';
 import { UI_STRINGS } from './strings';
 import { maximiseControl } from './window-controls';
 
@@ -80,51 +81,53 @@ function report(what: string): (error: unknown) => void {
 
 type TitleBarProps = {
   readonly title: string;
-  /** Whether the help screen is the one on show. Drawn as `aria-pressed`. */
-  readonly helpOpen: boolean;
-  /** Asked to swap between the launcher and the help. */
-  readonly onToggleHelp: () => void;
-  /** Whether the settings screen is the one on show. Drawn as `aria-pressed`. */
-  readonly settingsOpen: boolean;
-  /** Asked to swap between the launcher and the settings. */
-  readonly onToggleSettings: () => void;
+  /**
+   * The three screens, with the one being shown marked. Built by `screenTabs`
+   * in `src/screen-tabs.ts`, which is where the "exactly one pressed" invariant
+   * lives and is tested.
+   */
+  readonly tabs: readonly ScreenTab[];
+  /** Asked to show a screen. The argument is the hash that shows it. */
+  readonly onGoTo: (hash: string) => void;
 };
 
 /**
- * The window's chrome: its name, the way into the help, and the three controls
- * a window has.
+ * The window's chrome: its name, the three screens, and the three controls a
+ * window has.
  *
- * # THE HELP CONTROL IS A TOGGLE, and that is what gives the screen a way BACK
+ * # THREE TABS, AND THE REASON IS A SCREENSHOT
  *
- * Added 6 September 2026. It is `aria-pressed`, not a link: pressed while the
- * help is up, and pressing it again returns to the launcher. A one-way button
- * would have needed a second control - « retour » - and the design system
- * publishes no wording for one. This shape needs a single word for both
- * directions, and the state is carried by a mechanism the material layer
- * already dresses (`.c-btn[aria-pressed='true']`, the inset accent bar, which
- * `Showcase.tsx` publishes as « outil actif »).
+ * Until 7 September 2026 this bar carried two icon-only toggles, ⓘ and ⚙. From
+ * the help, the way back was to press the already-pressed ⓘ again. Nothing said
+ * so, and Thierry did not find it - he double-clicked the bar. The criterion
+ * that replaced that shape is literal: the way back to the capture has to be
+ * understandable ON A SCREENSHOT of the help screen, by somebody who has never
+ * used this application. A set of mute glyphs cannot do that, so the tabs carry
+ * their words - « Capturer », « Aide », « Réglages », all three already in
+ * `src/strings.ts` as the names of those screens.
  *
- * It sits inside `.c-titlebar__controls` because that is the one part of the bar
- * that is `app-region: no-drag`; anywhere else the press would move the window.
- * It carries no `data-tauri-drag-region`, which is what stops Tauri's own drag
- * script from treating it as a handle - the same rule the three window controls
- * rely on, read in `tauri-2.11.5/src/window/scripts/drag.js:57-58`.
+ * `aria-pressed` AND NOT `role="tab"`, deliberately. A `tablist` promises
+ * arrow-key navigation and a `tabpanel` relationship; this bar gives neither,
+ * and an ARIA role that lies is worse than a plain one that does not. Three
+ * toggle buttons is what this is, and it is what a keyboard walks with Tab.
+ * The state also lands on a mechanism the material layer already dresses -
+ * `.c-btn[aria-pressed='true']`, the inset accent bar `Showcase.tsx` publishes
+ * as « outil actif ».
  *
- * # AND SO IS THE SETTINGS CONTROL, added the same day
+ * # WHERE THEY SIT, AND WHY IT IS NOT A DETAIL
  *
- * Same shape, same toggle, and the same reason: `#/reglages` is a screen with no
- * other way in. The two application controls come FIRST and the three window
- * controls last, which is also the tab order - what this window DOES before
- * what is done TO this window - and it leaves the close button at the end,
- * where a hand looking for it already goes.
+ * In `.c-titlebar__tabs`, which carries `app-region: no-drag` exactly like
+ * `.c-titlebar__controls`: anywhere else in this bar, a press would MOVE the
+ * window instead of changing screen. They carry no `data-tauri-drag-region`
+ * either, which is what stops Tauri's own drag script from treating them as a
+ * handle - the walk in `tauri-2.11.5/src/window/scripts/drag.js:57-58` returns
+ * false as soon as it meets a BUTTON without the attribute.
+ *
+ * The tabs come first and the three window controls last, which is also the tab
+ * order - what this window DOES before what is done TO this window - and it
+ * leaves the close button at the end, where a hand looking for it already goes.
  */
-export default function TitleBar({
-  title,
-  helpOpen,
-  onToggleHelp,
-  settingsOpen,
-  onToggleSettings,
-}: TitleBarProps) {
+export default function TitleBar({ title, tabs, onGoTo }: TitleBarProps) {
   // Starts at `false` and is corrected by the first probe below. The starting
   // value is a guess and is treated as one - it is why the effect probes on
   // mount rather than only on the first resize.
@@ -171,25 +174,26 @@ export default function TitleBar({
   return (
     <div className="c-titlebar" data-tauri-drag-region="deep">
       <p className="c-titlebar__title">{title}</p>
+      {/* The title is `flex: 1 1 auto` and ellipsises; the tabs and the
+          controls are `flex: none`. That is the whole width policy at 480 px,
+          and the arithmetic behind it is in components.css above
+          `.c-titlebar__tabs` - the title is what gives, on purpose. */}
+      <div className="c-titlebar__tabs">
+        {tabs.map((tab) => (
+          <button
+            key={tab.screen}
+            type="button"
+            className="c-btn c-titlebar__tab"
+            aria-pressed={tab.pressed}
+            onClick={() => {
+              onGoTo(tab.hash);
+            }}
+          >
+            {UI_STRINGS[tab.labelKey]}
+          </button>
+        ))}
+      </div>
       <div className="c-titlebar__controls">
-        <button
-          type="button"
-          className="c-btn c-btn--ghost c-btn--icon c-winbtn"
-          aria-label={UI_STRINGS.helpTitle}
-          aria-pressed={helpOpen}
-          onClick={onToggleHelp}
-        >
-          <Glyph d={ICON.info} />
-        </button>
-        <button
-          type="button"
-          className="c-btn c-btn--ghost c-btn--icon c-winbtn"
-          aria-label={UI_STRINGS.settingsTitle}
-          aria-pressed={settingsOpen}
-          onClick={onToggleSettings}
-        >
-          <Glyph d={ICON.settings} />
-        </button>
         <button
           type="button"
           className="c-btn c-btn--ghost c-btn--icon c-winbtn"

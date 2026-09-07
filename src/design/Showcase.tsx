@@ -101,8 +101,23 @@ function Keys({ keys }: { readonly keys: readonly string[] }) {
   );
 }
 
+/* THE THREE TABS OF THE TITLE BAR, and their order. Words and not glyphs, and
+   that is the whole decision: the way back to the capture has to be readable ON
+   A SCREENSHOT of the help screen. The three labels are the names of the three
+   screens, which this page already publishes elsewhere - « Capturer » over the
+   launcher, « Aide » over the key map, « Réglages » over the recorder. */
+const SCREEN_TABS = [
+  ['capture', 'Capturer'],
+  ['help', 'Aide'],
+  ['settings', 'Réglages'],
+] as const;
+
+type ScreenName = (typeof SCREEN_TABS)[number][0];
+
 type WindowFrameProps = {
   readonly title: string;
+  /** Which tab is pressed. Exactly one always is. */
+  readonly screen?: ScreenName;
   readonly narrow?: boolean;
   readonly maximised?: boolean;
   readonly overlay?: ReactNode;
@@ -120,6 +135,7 @@ type WindowFrameProps = {
  */
 function WindowFrame({
   title,
+  screen = 'capture',
   narrow = false,
   maximised = false,
   overlay,
@@ -130,6 +146,23 @@ function WindowFrame({
       <div className="c-shell">
         <div className="c-titlebar" data-tauri-drag-region>
           <p className="c-titlebar__title">{title}</p>
+          {/* The tabs are `c-btn c-titlebar__tab` and NOT `c-btn--ghost`: that
+              variant's hover spends the same box-shadow the pressed accent bar
+              is drawn with, and would erase it under the pointer. The reasoning
+              is written out over `.c-titlebar__tabs` in components.css.
+              Like the window controls beside them, these press nothing here. */}
+          <div className="c-titlebar__tabs">
+            {SCREEN_TABS.map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className="c-btn c-titlebar__tab"
+                aria-pressed={key === screen}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="c-titlebar__controls">
             <button
               type="button"
@@ -237,6 +270,36 @@ function LauncherBody({ shortcut }: { readonly shortcut: ShortcutState }) {
   );
 }
 
+/**
+ * The help screen's head: its name, and the line that says what it holds.
+ *
+ * DRAWN TWICE ON THIS PAGE - inside the window specimen, where the tabs are
+ * judged, and over the key map, where the screen is designed - and WRITTEN
+ * ONCE. A sentence typed twice on this page is the drift `check-strings.mjs`
+ * exists to refuse, one file earlier than it can see.
+ *
+ * WHAT THE SENTENCE MAY SAY. Only what `docs/PRD.md` §3 already lists: the
+ * annotation editor and the local library are INDISPENSABLE v1, the scrolling
+ * page capture is SOUHAITABLE v1. No date, because none is known.
+ */
+function HelpHead() {
+  return (
+    <>
+      {/* `h2`, like the recorder's own name in section s-recorder: this block
+          is drawn inside a Section whose label is an h2, and the category
+          heading under it is an h3. `LauncherBody` uses an h3 for the same line
+          and that inconsistency predates this component - it is not made worse
+          here, and it is not silently "fixed" in a run about something else. */}
+      <h2 className="c-screen__name">Aide</h2>
+      <p className="c-screen__lede">
+        Pour l&apos;instant, cette page dit deux choses : les raccourcis enregistrés, et les
+        écrans que cette machine expose. L&apos;éditeur d&apos;annotation, la bibliothèque et la
+        capture de page défilante y ajouteront leurs lignes.
+      </p>
+    </>
+  );
+}
+
 export default function Showcase() {
   return (
     <main className="c-showcase">
@@ -259,7 +322,7 @@ export default function Showcase() {
         <Section id="s-window" label="V1 · la fenêtre — barre de titre en verre, lanceur dessous">
           <div className="c-stack">
             <Specimen
-              caption="480 × 600 — le minimum déclaré dans tauri.conf.json. Barre 52 px, trois commandes de 44 px, la page défile DESSOUS. CE CADRE NE VAUT 480 PX QU'À PARTIR D'UNE PAGE DE 512 (--c-frame-app + 2 × --gutter) : la vitrine dépense sa propre gouttière avant lui. Mesuré le 5 septembre 2026 — à une page de 480 le cadre tombe à 448, son lanceur à 414 px et à UNE colonne, là où la vraie fenêtre de 480 en donne 446 et DEUX."
+              caption="480 × 600 — le minimum déclaré dans tauri.conf.json. Barre 52 px, trois onglets, trois commandes de 44 px, la page défile DESSOUS. Le titre est le seul élément qui cède : 246 px d'onglets + 132 px de commandes laissent 66 px au mot « Cliché », qui en demande ~40. CE CADRE NE VAUT 480 PX QU'À PARTIR D'UNE PAGE DE 512 (--c-frame-app + 2 × --gutter) : la vitrine dépense sa propre gouttière avant lui. Mesuré le 5 septembre 2026 — à une page de 480 le cadre tombe à 448, son lanceur à 414 px et à UNE colonne, là où la vraie fenêtre de 480 en donne 446 et DEUX."
               wide
             >
               <WindowFrame title="Cliché">
@@ -268,7 +331,28 @@ export default function Showcase() {
             </Specimen>
 
             <Specimen
-              caption="375 px, fenêtre agrandie — titre coupé à l'ellipse, glyphe « restaurer », lanceur à une colonne. Cette largeur n'est PAS atteignable aujourd'hui : minWidth vaut 480. Même réserve que ci-dessus : ce cadre ne vaut 375 px qu'à partir d'une page de 407 (--c-frame-narrow + 2 × --gutter)."
+              caption="L'AIDE, ET LE RETOUR. C'est la capture d'écran sur laquelle le critère se juge : l'onglet « Capturer » est écrit en toutes lettres, à gauche de celui qui est enfoncé. Avant le 7 septembre 2026 il n'y avait ici que deux glyphes, et revenir demandait de ré-appuyer sur celui qui était déjà pressé. Le corps porte .c-screen comme l'écran réel ; À CETTE LARGEUR LE PLAFOND NE MORD PAS — 448 px de contenu contre --c-screen-max = 544. Il ne commence à agir qu'à partir d'une fenêtre de 576, et c'est là qu'il empêche une aide courte de flotter."
+              wide
+            >
+              <WindowFrame title="Cliché" screen="help">
+                <div className="c-screen">
+                  <HelpHead />
+                  <dl className="c-keymap" style={{ marginBlockStart: 'var(--space-5)' }}>
+                    <dt>
+                      <Keys keys={CAPTURE_KEYS} />
+                    </dt>
+                    <dd>Capturer une zone</dd>
+                    <dt>
+                      <Keys keys={['Échap']} />
+                    </dt>
+                    <dd>Fermer le voile sans capturer</dd>
+                  </dl>
+                </div>
+              </WindowFrame>
+            </Specimen>
+
+            <Specimen
+              caption="375 px, fenêtre agrandie — titre coupé à l'ellipse, glyphe « restaurer », lanceur à une colonne. Cette largeur n'est PAS atteignable aujourd'hui : minWidth vaut 480. À CETTE LARGEUR LES ONGLETS NE TIENNENT PAS : 207 px disponibles pour 246 px de groupe, le titre s'efface d'abord puis la barre est coupée à droite par l'overflow de .c-shell. C'est écrit plutôt que bricolé — l'arithmétique est au-dessus de .c-titlebar__tabs. Même réserve que ci-dessus : ce cadre ne vaut 375 px qu'à partir d'une page de 407 (--c-frame-narrow + 2 × --gutter)."
               wide
             >
               <WindowFrame
@@ -282,6 +366,19 @@ export default function Showcase() {
           </div>
 
           <ul className="c-rules" style={{ marginBlockStart: 'var(--space-4)' }}>
+            <li>
+              Les trois onglets sont des <code>c-btn c-titlebar__tab</code>, et{' '}
+              <strong>pas des <code>c-btn--ghost</code></strong> : le survol du ghost dépense{' '}
+              <code>box-shadow</code>, la propriété même qui dessine la barre d&apos;accent de
+              l&apos;état pressé, et l&apos;effacerait sous le pointeur. L&apos;onglet actif est{' '}
+              <code>aria-pressed=&quot;true&quot;</code> — rien de neuf n&apos;est dessiné.
+            </li>
+            <li>
+              Leur largeur est de l&apos;<strong>arithmétique, pas une media query</strong> :
+              480 − 16 − 4 − 16 − 132 = 312 px pour le titre et les onglets, dont 246 pour le
+              groupe. Les libellés sont <em>estimés</em> à 0,5 em par caractère — rien ici ne
+              sait mesurer un glyphe, et c&apos;est dit plutôt que maquillé.
+            </li>
             <li>
               Le verre est ici parce que <strong>quelque chose bouge derrière</strong> : le
               défilement passe sous la barre. Sur un fond immobile il coûterait une couche
@@ -553,6 +650,57 @@ export default function Showcase() {
         </Section>
 
         {/* ---------------------------------------------------------- */}
+        <Section
+          id="s-veil"
+          label="V1 · le voile — la ligne clavier, sur les deux fonds extrêmes"
+        >
+          {/* THE PLATE NOBODY HAD EVER LOOKED AT. It was drawn in veil.html's
+              own stylesheet, from --gutter to --gutter: a 1888 px black band on
+              a 1920 px screen, lying across the taskbar, in English. Thierry
+              met it on the installed v0.1.0 and read it as a rendering fault -
+              which is exactly what an unpublished component becomes.
+              The band is the right backdrop for it and not a decoration: this
+              plate lands on a screenshot whose content is unknown, and the two
+              halves are the two extremes check-contrast.mjs brackets against. */}
+          {/* The band has no content of its own here - the plate is absolute,
+              like the two halves - so it would collapse to its own padding and
+              leave the plate lying on the edge. Two --space-7 give it the air a
+              screen has. Scaffolding, and it stays in the scaffolding. */}
+          <div className="c-band" style={{ minBlockSize: 'calc(var(--space-7) * 2)' }}>
+            <div className="c-band__half c-band__half--dark" />
+            <div className="c-band__half c-band__half--light" />
+            <p className="c-veil-hint">Entrée ou double-clic copie · Échap annule</p>
+            <p className="c-band__caption">moitié noire · moitié blanche</p>
+          </div>
+
+          <ul className="c-rules" style={{ marginBlockStart: 'var(--space-4)' }}>
+            <li>
+              <strong>Plafonnée à <code>--c-toast-max</code> et centrée</strong>, comme le
+              toast : le système avait déjà tranché la largeur d&apos;un message posé au pied
+              de l&apos;écran, et une plaque pleine largeur se lit comme un artefact, pas
+              comme une phrase.
+            </li>
+            <li>
+              Centrée par <code>margin-inline: auto</code> et jamais par{' '}
+              <code>translateX(-50%)</code> : <code>transform</code>,{' '}
+              <code>backdrop-filter</code>, <code>will-change</code> et toute opacité
+              inférieure à 1 font construire une couche de composition{' '}
+              <strong>au parse</strong> — or ce document est parsé pendant le préchauffage du
+              voile, et la peinture retomberait dans l&apos;intervalle que le lot 1d mesure.
+            </li>
+            <li>
+              Opaque, pour la même raison, donc <strong>21:1</strong> quoi qu&apos;il y ait
+              dessous. L&apos;anneau deux tons est ce qui la sépare d&apos;un bureau noir.
+            </li>
+            <li>
+              La plaque et le toast se posent au même endroit, à{' '}
+              <code>--space-5</code> du bas : ils sont mutuellement exclusifs dans{' '}
+              <code>src/veil/main.ts</code> et ne sont jamais à l&apos;écran ensemble.
+            </li>
+          </ul>
+        </Section>
+
+        {/* ---------------------------------------------------------- */}
         <Section id="s-recorder" label="V1 · réglages — le raccourci de capture, réglable">
           <div className="c-panel">
             {/* The screen's NAME, published here on 6 September 2026 for the
@@ -561,8 +709,19 @@ export default function Showcase() {
                 section label in this page but no name for the SCREEN it lives
                 on. Same class the launcher uses for « Capturer ». */}
             <h2 className="c-screen__name">Réglages</h2>
+            {/* THE PERIMETER, added 7 September 2026. One field in a 900 px
+                window reads as a screen somebody forgot to finish; what was
+                missing is not a feature, it is the sentence that says which
+                ones are coming HERE. Both futures named are docs/PRD.md §3
+                INDISPENSABLE v1 - the PNG save with its « ne pas enregistrer
+                automatiquement » switch, and retention. No date is promised. */}
+            <p className="c-screen__lede">
+              Un seul réglage aujourd&apos;hui : la combinaison qui déclenche la capture.
+              L&apos;enregistrement automatique des captures et leur durée de rétention viendront
+              ici.
+            </p>
 
-            <div className="c-specimens">
+            <div className="c-specimens" style={{ marginBlockStart: 'var(--space-5)' }}>
               <Specimen caption="repos · la combinaison en place">
                 <div className="c-field">
                   <span className="c-field__label">Raccourci de capture</span>
@@ -765,9 +924,14 @@ export default function Showcase() {
                 was missing and the catalogue may not invent a word the system
                 does not draw. Same class the launcher uses for « Capturer »:
                 a screen name is one thing, a category heading below it is
-                another, and « Aide » had been neither. */}
-            <h2 className="c-screen__name">Aide</h2>
-            <h3 className="c-section__label">Capture</h3>
+                another, and « Aide » had been neither.
+                THE LINE UNDER IT arrived on 7 September 2026 and is drawn by
+                `HelpHead`, which the window specimen above shares - one
+                sentence, two drawings. */}
+            <HelpHead />
+            <h3 className="c-section__label" style={{ marginBlockStart: 'var(--space-5)' }}>
+              Capture
+            </h3>
             <dl className="c-keymap">
               <dt>
                 <Keys keys={CAPTURE_KEYS} />

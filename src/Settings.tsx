@@ -285,8 +285,17 @@ export default function Settings() {
     (note !== undefined && (note.state === 'kept' || note.state === 'stranded'));
 
   return (
-    <>
+    /* `.c-screen` is the measure, added 7 September 2026, for the reason the
+       help screen carries the same wrapper: ONE field floating in the middle of
+       a 900 px window reads as a screen nobody finished. --c-screen-max in
+       components.css holds the arithmetic, including why it changes nothing at
+       the window's 480 px minimum. */
+    <div className="c-screen">
       <h1 className="c-screen__name">{UI_STRINGS.settingsTitle}</h1>
+      {/* The perimeter, in one line: what is here today and what is coming to
+          THIS screen. Published in the showcase under the same name, section
+          s-recorder. */}
+      <p className="c-screen__lede">{UI_STRINGS.settingsLede}</p>
 
       <div className="c-field" style={BLOCK_GAP}>
         <span className="c-field__label" id={LABEL_ID}>
@@ -393,6 +402,6 @@ export default function Settings() {
           </span>
         )}
       </div>
-    </>
+    </div>
   );
 }

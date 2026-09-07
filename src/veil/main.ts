@@ -568,6 +568,17 @@ const showToast = (plan: ToastPlan): void => {
 // and PRD A2 gives it the same focus ring as every other control.
 toastDismiss.setAttribute('aria-label', UI_STRINGS.dismissMessage);
 
+// The keyboard line, written the same way and at the same moment, and for the
+// same reason: this document may not carry a sentence of its own. It held one
+// in English until 7 September 2026 - the only visible string of the product
+// that never passed through the catalogue.
+//
+// AT THE PREHEAT AND NOT AT CAPTURE TIME. The plate wears `hidden` until a
+// selection exists, so writing it here costs one text node in a window that has
+// seconds to spare, and costs the capture path nothing at all. The element is
+// already known to exist: `main.ts` throws at load if it does not.
+hint.textContent = UI_STRINGS.veilHint;
+
 toastDismiss.addEventListener('click', (event: MouseEvent) => {
   event.preventDefault();
   hideToast();
