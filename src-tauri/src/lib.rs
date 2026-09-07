@@ -134,6 +134,36 @@ pub fn run() {
             veil::veil_dismissed,
         ])
         .setup(|app| {
+            // THE FIRST INSTRUCTION, and the order is the whole of the fix of
+            // 7 September 2026.
+            //
+            // THE WINDOWS ARE ALREADY BUILT WHEN THIS CLOSURE STARTS. Tauri's
+            // own `setup` loops over `app.config().app.windows` and builds each
+            // one that asks for it, and only then does
+            // `if let Some(setup) = app.setup.take() { (setup)(app) }` run
+            // (`tauri-2.11.5/src/app.rs:2521-2535`, read in the vendored source
+            // on 7 September 2026). So the `main` webview is loading its
+            // document, booting React and free to `invoke` while every line
+            // below is still running - and the lines below take real time:
+            // `collect_displays` enumerates the monitors through xcap, and
+            // `veil::create` builds an entire WebView2, "hundreds of
+            // milliseconds" by its own comment further down.
+            //
+            // Until today the capture status was managed on the LAST line of
+            // this closure, so `describe_shortcut_status` had nothing to answer
+            // with during that whole interval and returned an error. The
+            // launcher drew it as a red "the shortcut registry could not be
+            // read" - over a shortcut that then worked perfectly, which is how
+            // the defect was found. The state exists from here on and says
+            // `Starting` until `install` has answered.
+            //
+            // WHAT IS DELIBERATELY NOT MOVED UP WITH IT: `shortcut::install`.
+            // A global hotkey that is live before `Timings`, `MainWindowClaim`,
+            // `Veil` and the veil window exist is a press that lands in a
+            // half-built application. The STATE moves early; the ANSWER stays
+            // where it always was, further down.
+            app.manage(shortcut::CaptureShortcut::starting());
+
             // Logged from the backend, before the webview has had a chance to
             // render. If the window comes up blank - a CSP mistake, a dev
             // server that never started - the terminal still shows whether the
@@ -217,10 +247,16 @@ pub fn run() {
             // silence either - Cliche would look perfectly fine and do nothing.
             //
             // Two readers now, and that is the change of 6 September 2026. The
-            // terminal gets the line, as it always did. The STATUS is managed,
+            // terminal gets the line, as it always did. The STATUS is recorded,
             // so `describe_shortcut_status` can hand the launcher what actually
             // happened instead of leaving it to say the registry could not be
             // read - a sentence that was false in every one of the three cases.
+            //
+            // RECORDED rather than managed, since 7 September 2026: the state
+            // was managed on the first instruction of this closure, hundreds of
+            // milliseconds ago, and the launcher has most likely already read
+            // `Starting` out of it. This call is what replaces that with what
+            // the operating system answered.
             //
             // WHICH combination is offered is read from disk first. The same
             // rule applies one level up and it is the reason `settings::read`
@@ -236,11 +272,19 @@ pub fn run() {
             if let Some(line) = installed.status.terminal_line() {
                 eprintln!("{line}");
             }
-            app.manage(shortcut::CaptureShortcut::new(
-                installed.status,
-                installed.attempted,
-                installed.plugin_loaded,
-            ));
+            // `try_state` and not `state`: the latter PANICS when the type was
+            // never managed. It IS managed - the first instruction of this
+            // closure does it - so the other branch is reachable only if that
+            // line is removed, and a printed line answers that far better than
+            // bringing the application down over it.
+            match app.try_state::<shortcut::CaptureShortcut>() {
+                Some(state) => state.record(installed),
+                None => eprintln!(
+                    "[cliche] shortcut: no capture state is managed, so what the system answered \
+                     cannot reach the launcher. The first instruction of `setup` in \
+                     src-tauri/src/lib.rs is what manages it, and it has gone."
+                ),
+            }
 
             // Measuring without touching the keyboard. `CLICHE_BENCH=20` runs
             // the very same `perform_capture` the shortcut calls; read

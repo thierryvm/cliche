@@ -442,10 +442,24 @@ pub fn set_capture_shortcut(
 /// `CaptureShortcut` in `shortcut.rs` is where that is kept.
 ///
 /// `try_state` and not `state`, like everything else that runs on a webview IPC
-/// thread: `state` panics when the type was never managed, and an unmanaged
-/// status is a startup that went wrong, not a reason to take the application
-/// down. The error crosses to the page, which says the registry could not be
-/// read - which is exactly what happened.
+/// thread: `state` panics when the type was never managed, and taking the
+/// application down over a missing diagnostic is a bad trade.
+///
+/// # IT USED TO FAIL ON A LAUNCH THAT WAS SIMPLY STILL STARTING
+///
+/// Until 7 September 2026 an unmanaged state was the ONLY answer this command
+/// had for a launcher that asked early, and asking early is the ordinary case:
+/// Tauri builds the windows declared in `tauri.conf.json` before it calls our
+/// `setup` (`tauri-2.11.5/src/app.rs:2521-2535`), so the launcher boots and
+/// invokes while `setup` is still enumerating monitors and building the veil's
+/// WebView2. The error crossed to the page, and the page drew a red "the
+/// shortcut registry could not be read" over a shortcut that worked. `setup`
+/// now manages a [`crate::shortcut::ShortcutStatus::Starting`] state on its
+/// first instruction, so the honest answer exists at every instant.
+///
+/// The error path is KEPT, and [`status_answer`] is where it lives. It no longer
+/// describes a race - it describes a `setup` that never ran at all, which is a
+/// programming error, and swallowing it with a default would hide it.
 ///
 /// **Main window only**, by capability AND in Rust, for the reason `displays.rs`
 /// gives: every command names the window it serves.
@@ -460,13 +474,32 @@ pub fn describe_shortcut_status(
         "describe_shortcut_status",
     )?;
 
-    app.try_state::<CaptureShortcut>()
-        .map(|managed| managed.status())
-        .ok_or_else(|| {
-            "no shortcut status is managed, so nothing here knows what the system answered. \
-             `setup` in src-tauri/src/lib.rs is what puts it there."
-                .to_owned()
-        })
+    status_answer(
+        app.try_state::<CaptureShortcut>()
+            .map(|managed| managed.status()),
+    )
+}
+
+/// What [`describe_shortcut_status`] answers, given what is managed.
+///
+/// Split out of the command because a command cannot be reached from a test: it
+/// takes a `Webview`, and building one needs a running event loop - the same
+/// constraint that put `shortcut::change` behind a trait and `ipc::ensure_from`
+/// behind a `&str`. What is left in the command is one lookup; the DECISION is
+/// here, where `an_undecided_status_is_answered_and_not_refused` holds it.
+///
+/// Whatever is managed is handed over UNCHANGED, every variant of it. That is
+/// the rule, and it is worth stating because the tempting shortcut is the one
+/// that caused the defect: filtering a state the frontend might not know about
+/// turns a launch that is merely starting into a launch that failed.
+fn status_answer(managed: Option<ShortcutStatus>) -> Result<ShortcutStatus, String> {
+    managed.ok_or_else(|| {
+        "no shortcut status is managed at all. Since 7 September 2026 `setup` manages one on its \
+         FIRST instruction (src-tauri/src/lib.rs), before anything slow runs, so this is not a \
+         call that arrived too early: it means `setup` never ran. That is a programming error in \
+         this application, not a machine problem."
+            .to_owned()
+    })
 }
 
 #[cfg(test)]
@@ -946,6 +979,81 @@ mod tests {
             .is_ok(),
             "the settings screen is in the main window; refusing it there would leave the \
              recorder as mute as it was before"
+        );
+    }
+
+    // --- what the launcher is told while `setup` is still running ------------
+
+    #[test]
+    fn an_undecided_status_is_answered_and_not_refused() {
+        // THE defect of 7 September 2026, in the one place a test can reach it.
+        //
+        // On the installed binary the launcher showed a red "the shortcut
+        // registry could not be read" while the shortcut worked: it had asked
+        // during `setup`, found no managed state, and got an error. The state is
+        // managed from the first instruction of `setup` now, so what arrives
+        // here for that launch is `Starting` - and `Starting` is an ANSWER.
+        //
+        // Held on every variant rather than on that one, because the rule is
+        // general: this command hands over what is managed, whatever it is. A
+        // filter added for a state the frontend "does not know about yet" is
+        // exactly how a launch that is merely starting becomes a launch that
+        // failed.
+        let combination = accept("Ctrl+Shift+Digit2").expect("the capture combination is valid");
+
+        for status in [
+            ShortcutStatus::Starting,
+            ShortcutStatus::Accepted {
+                accelerator: combination.accelerator.clone(),
+            },
+            ShortcutStatus::RefusedBySystem {
+                accelerator: combination.accelerator,
+                reason: "HotKey already registered".to_owned(),
+            },
+            ShortcutStatus::NotAttempted {
+                reason: "the global-shortcut plugin failed to load".to_owned(),
+            },
+        ] {
+            assert_eq!(
+                status_answer(Some(status.clone())),
+                Ok(status.clone()),
+                "{status:?} is managed and this command refused it or changed it. The launcher \
+                 draws what comes back from here; anything but the state itself is a screen \
+                 saying something that did not happen"
+            );
+        }
+    }
+
+    #[test]
+    fn a_status_that_is_not_managed_at_all_is_still_an_error_and_no_longer_blames_a_race() {
+        // The path that is DELIBERATELY kept. `unwrap_or(Starting)` here would
+        // have been shorter and would have turned a `setup` that never ran - a
+        // real defect, and one nothing else in the process reports - into a
+        // launcher waiting politely for ever.
+        //
+        // The wording is the part that changed. It used to describe the race
+        // above, which was wrong twice over: it was the ordinary case, and it is
+        // no longer reachable that way at all.
+        let refusal =
+            status_answer(None).expect_err("a status nothing manages must not pass for a status");
+
+        assert!(
+            refusal.contains("never ran"),
+            "the message must name what is now the ONLY cause - a `setup` that did not run - \
+             rather than the startup race it used to describe: {refusal}"
+        );
+        assert!(
+            refusal.contains("src-tauri/src/lib.rs"),
+            "the message must name the file that manages the state, or nobody can act on it: \
+             {refusal}"
+        );
+        // Case-insensitive, and deliberately: the message shouts FIRST, and a
+        // test that pinned the capitalisation would be asking about typography
+        // rather than about what the sentence says.
+        assert!(
+            refusal.to_lowercase().contains("first instruction"),
+            "the message must say WHEN the state is managed. That is what tells the reader this \
+             is not a call that came too early: {refusal}"
         );
     }
 

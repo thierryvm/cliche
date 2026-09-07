@@ -118,10 +118,10 @@ pub(crate) fn report_due(run_number: usize) -> bool {
     run_number > 0 && run_number % RUNS_PER_REPORT == 0
 }
 
-/// The three answers this application can get about its capture shortcut, and
-/// the only three it will ever report.
+/// What this application knows about its capture shortcut: the three answers
+/// the operating system can give, and the state it is in before any of them.
 ///
-/// # Why a type, and why THREE states
+/// # Why a type, and why THREE answers
 ///
 /// Until 6 September 2026 [`install`] returned `Result<(), String>` and `lib.rs`
 /// printed the error and dropped it. Nothing else in the process could ever
@@ -137,20 +137,48 @@ pub(crate) fn report_due(run_number: usize) -> bool {
 /// telling that user to close another program would send them hunting for
 /// something that does not exist.
 ///
+/// # AND WHY A FOURTH STATE THAT IS NOT AN ANSWER - 7 SEPTEMBER 2026
+///
+/// [`Self::Starting`] is the absence of an answer, and it exists because there
+/// is a real interval in which there is none. Tauri builds the windows declared
+/// in `tauri.conf.json` BEFORE it calls our `setup`
+/// (`tauri-2.11.5/src/app.rs:2521-2535`), so the launcher is loading, booting
+/// React and calling `describe_shortcut_status` while `setup` is still running.
+/// Before this variant, that call found no managed state and came back an
+/// ERROR - which the launcher drew as a red "the shortcut registry could not be
+/// read" over a shortcut that then worked perfectly.
+///
+/// The honest fix is not to answer faster. It is to say WHICH of the two things
+/// is true: nothing has been decided yet, or here is what was decided. An
+/// application that is still starting is not an application that failed.
+///
 /// # The wire shape
 ///
 /// Serialised internally tagged, so the frontend switches on one field. Each
 /// variant NAMES its tag rather than leaning on `rename_all`, so that the
 /// strings crossing to TypeScript are readable in this file and can be held
 /// against `src/shortcuts.ts` - which
-/// `the_three_wire_tags_are_the_ones_serde_is_told_to_emit_and_the_frontend_reads`
-/// does.
+/// `every_wire_tag_serde_is_told_to_emit_is_one_the_frontend_reads` does.
 ///
 /// `Clone` because the command hands a copy to the webview; the value is
 /// managed state and there is exactly one of it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status")]
 pub enum ShortcutStatus {
+    /// Nothing has been decided yet: `setup` is still running.
+    ///
+    /// The state a [`CaptureShortcut`] is born in, and the one it is in for the
+    /// few hundred milliseconds `setup` spends enumerating monitors and building
+    /// the veil's WebView2 before [`install`] is even called.
+    ///
+    /// No field, and that is the point: there is nothing to report. Not an
+    /// accelerator either - which combination will be offered is
+    /// [`startup_choice`]'s answer, and it is read from disk further down
+    /// `setup`. A field filled in with the registry's own combination would be a
+    /// guess, and this application refuses those elsewhere for the same reason
+    /// (see [`Self::NotAttempted`]).
+    #[serde(rename = "starting")]
+    Starting,
     /// The operating system took the combination. The shortcut works.
     #[serde(rename = "accepted")]
     Accepted {
@@ -193,7 +221,12 @@ impl ShortcutStatus {
     /// readable.
     pub fn terminal_line(&self) -> Option<String> {
         match self {
-            Self::Accepted { .. } => None,
+            // Silent for the same reason as `Accepted`, and for one more: this
+            // is not an outcome. Announcing a shortcut that has not been offered
+            // yet would put a line in the terminal for something that has not
+            // happened, and the line that says what DID happen is a few
+            // milliseconds behind it.
+            Self::Starting | Self::Accepted { .. } => None,
             Self::RefusedBySystem {
                 accelerator,
                 reason,
@@ -463,8 +496,29 @@ pub fn change<R: Registrar>(
 /// Managed by Tauri, and behind a mutex since the combination became settable:
 /// `describe_shortcut_status` and `describe_shortcuts` both read it, and
 /// `set_capture_shortcut` writes it, on whatever thread the IPC call landed on.
+///
+/// # It is managed BEFORE it has anything to say - 7 September 2026
+///
+/// [`Self::starting`] builds one that knows nothing, and `setup` manages it on
+/// its very first instruction; [`Self::record`] fills it in when [`install`] has
+/// answered. The reason is in [`ShortcutStatus::Starting`]: the launcher's
+/// webview is already running while `setup` is, so a state that appears only at
+/// the end of `setup` is a state the launcher asks for and does not find.
 #[derive(Debug)]
 pub struct CaptureShortcut {
+    inner: Mutex<CaptureState>,
+}
+
+#[derive(Debug, Clone)]
+struct CaptureState {
+    status: ShortcutStatus,
+    /// The combination the status is ABOUT, with the caps to draw it.
+    ///
+    /// `None` for [`ShortcutStatus::Starting`], where nothing has been offered
+    /// yet, and for [`ShortcutStatus::NotAttempted`], where there may be no
+    /// entry to read a combination from at all - which is exactly why that
+    /// variant carries no accelerator either.
+    attempted: Option<Combination>,
     /// Whether the global-shortcut plugin is loaded in this process at all.
     ///
     /// NOT a nicety, and not derivable from the status without a chain of
@@ -474,19 +528,24 @@ pub struct CaptureShortcut {
     /// `Manager::state` PANICS when the type was never managed. Nothing that
     /// runs on an IPC thread may panic, so [`change_capture_shortcut`] refuses
     /// outright rather than reaching a plugin that is not there.
-    plugin_loaded: bool,
-    inner: Mutex<CaptureState>,
-}
-
-#[derive(Debug, Clone)]
-struct CaptureState {
-    status: ShortcutStatus,
-    /// The combination the status is ABOUT, with the caps to draw it.
     ///
-    /// `None` only for [`ShortcutStatus::NotAttempted`], where there may be no
-    /// entry to read a combination from at all - which is exactly why that
-    /// variant carries no accelerator either.
-    attempted: Option<Combination>,
+    /// # WHY IT MOVED INSIDE THE MUTEX on 7 September 2026
+    ///
+    /// It used to be an immutable field of [`CaptureShortcut`], passed once to
+    /// the constructor. It cannot stay one: the value is managed before
+    /// [`install`] has run, and at that instant nobody knows whether the plugin
+    /// will load. So it had to become mutable, and there were two ways - an
+    /// `AtomicBool` beside the mutex, or this.
+    ///
+    /// This, because the three facts here come from ONE [`Installed`] value and
+    /// must change together. A reader crossing the two under a single lock can
+    /// never see the status of this launch beside the flag of the state before
+    /// it; with a second, independent primitive, "did the plugin load" and "what
+    /// did the system answer" would be two questions answered at two instants,
+    /// and the only way to keep them honest would be a rule nothing enforces.
+    /// The lock costs nothing here either: every caller that reads this flag -
+    /// [`change_capture_shortcut`] - takes the lock a line later anyway.
+    plugin_loaded: bool,
 }
 
 impl CaptureShortcut {
@@ -496,9 +555,50 @@ impl CaptureShortcut {
         plugin_loaded: bool,
     ) -> Self {
         Self {
-            plugin_loaded,
-            inner: Mutex::new(CaptureState { status, attempted }),
+            inner: Mutex::new(CaptureState {
+                status,
+                attempted,
+                plugin_loaded,
+            }),
         }
+    }
+
+    /// A state for a launch that has not decided anything yet.
+    ///
+    /// THE first instruction of `setup` (`lib.rs`), and the whole of the fix of
+    /// 7 September 2026 - see [`ShortcutStatus::Starting`] for the race it
+    /// closes, and `the_capture_state_is_managed_before_the_slow_part_of_setup`
+    /// for what holds `lib.rs` to it.
+    ///
+    /// `plugin_loaded` is FALSE here, and it is the one field of the three whose
+    /// starting value is a decision rather than an absence: nothing has loaded
+    /// the plugin at this point, and [`change_capture_shortcut`] reads this flag
+    /// to decide whether it may touch it at all. A `true` would let a settings
+    /// screen that opened early reach `global_shortcut()`, which PANICS when the
+    /// plugin was never managed - on an IPC thread, which takes the application
+    /// down.
+    pub fn starting() -> Self {
+        Self::new(ShortcutStatus::Starting, None, false)
+    }
+
+    /// Replaces everything this state holds with what [`install`] answered.
+    ///
+    /// Takes the whole [`Installed`], deliberately, rather than three arguments:
+    /// the status, the combination and the plugin flag are one launch's single
+    /// answer, and passing them separately is the one way to end up with a
+    /// status from this install beside a flag from nowhere. `note` is ignored
+    /// here on purpose - it is a line for the terminal, printed by the caller,
+    /// and never a fact about the shortcut.
+    ///
+    /// Called once, from `setup`. It goes through the same mutex as
+    /// [`change_capture_shortcut`]'s write, so a settings screen that somehow
+    /// got in first cannot have its answer half overwritten.
+    pub fn record(&self, installed: Installed) {
+        self.with(|state| {
+            state.status = installed.status;
+            state.attempted = installed.attempted;
+            state.plugin_loaded = installed.plugin_loaded;
+        });
     }
 
     /// Runs something against the state, whatever happened on another thread.
@@ -531,8 +631,26 @@ impl CaptureShortcut {
     pub fn active(&self) -> Option<Combination> {
         self.with(|state| match state.status {
             ShortcutStatus::Accepted { .. } => state.attempted.clone(),
-            ShortcutStatus::RefusedBySystem { .. } | ShortcutStatus::NotAttempted { .. } => None,
+            // `Starting` among them: nothing has been offered to the operating
+            // system yet, so nothing is registered. Answering otherwise would
+            // have `change` release a combination nobody holds.
+            ShortcutStatus::Starting
+            | ShortcutStatus::RefusedBySystem { .. }
+            | ShortcutStatus::NotAttempted { .. } => None,
         })
+    }
+
+    /// Whether the global-shortcut plugin is loaded in this process at all.
+    ///
+    /// An accessor and no longer a field read directly, since the flag moved
+    /// under the mutex. The `plugin_loaded` field of `CaptureState` carries the
+    /// reasons: why it had to become mutable, and why it went there rather than
+    /// into an atomic beside the lock.
+    ///
+    /// Private, like the field it replaces: the only caller outside the tests is
+    /// [`change_capture_shortcut`], a few lines below.
+    fn plugin_loaded(&self) -> bool {
+        self.with(|state| state.plugin_loaded)
     }
 
     fn set(&self, status: ShortcutStatus, attempted: Option<Combination>) {
@@ -632,11 +750,17 @@ pub struct Installed {
 
 /// Loads the plugin and binds the capture shortcut to the timing handler.
 ///
-/// Returns WHAT HAPPENED rather than whether it worked. The three states of
-/// [`ShortcutStatus`] are the three answers this function can come back with,
-/// and every one of them ends up on the screen through
+/// Returns WHAT HAPPENED rather than whether it worked. Three of the four states
+/// of [`ShortcutStatus`] are the answers this function can come back with, and
+/// every one of them ends up on the screen through
 /// `shortcuts::describe_shortcut_status`: this return value is no longer a line
 /// for the terminal, it is the fact the launcher draws.
+///
+/// The fourth, [`ShortcutStatus::Starting`], is never returned here and could
+/// not be: it means "this function has not run yet", and the value that carries
+/// it is built by [`CaptureShortcut::starting`] before `setup` reaches this
+/// call. What ends it is [`CaptureShortcut::record`], with what is returned
+/// below.
 ///
 /// The COMBINATION it binds is [`startup_choice`]'s, which is the user's when
 /// there is a usable one on disk and the registry's otherwise. A settings file
@@ -739,10 +863,17 @@ pub fn change_capture_shortcut(
     // programming for its own sake: `global_shortcut()` panics when the plugin
     // was never loaded, and a panic on an IPC thread takes the application down.
     // An error string crosses back to the page; a panic would not.
-    if !state.plugin_loaded {
+    //
+    // TWO launches reach this line, since the state started being managed before
+    // `install` runs, and the message names both: one where the plugin failed to
+    // load, and one where `setup` simply has not got there yet. Saying only the
+    // first would have been a message that blames a failure for a wait.
+    if !state.plugin_loaded() {
         return Err(
             "the global-shortcut plugin is not loaded in this process, so no combination can be \
-             registered at all. The line `setup` printed at startup says why."
+             registered at all. Either `setup` has not installed the shortcut yet - the state is \
+             managed on its first instruction and filled in afterwards - or the plugin failed to \
+             load, and the line `setup` printed at startup then says why."
                 .to_owned(),
         );
     }
@@ -941,11 +1072,13 @@ mod tests {
 
     /// The tag serde is told to emit for a status, one arm per variant.
     ///
-    /// Exhaustive on purpose: a fourth variant added to [`ShortcutStatus`] stops
-    /// this file compiling, which is the loudest way to be told that the
-    /// TypeScript union has to grow an arm too.
+    /// Exhaustive on purpose: a variant added to [`ShortcutStatus`] stops this
+    /// file compiling, which is the loudest way to be told that the TypeScript
+    /// union has to grow an arm too. It did exactly that on 7 September 2026,
+    /// when `Starting` was added.
     fn wire_tag(status: &ShortcutStatus) -> &'static str {
         match status {
+            ShortcutStatus::Starting => "starting",
             ShortcutStatus::Accepted { .. } => "accepted",
             ShortcutStatus::RefusedBySystem { .. } => "refused-by-system",
             ShortcutStatus::NotAttempted { .. } => "not-attempted",
@@ -953,7 +1086,7 @@ mod tests {
     }
 
     #[test]
-    fn the_three_wire_tags_are_the_ones_serde_is_told_to_emit_and_the_frontend_reads() {
+    fn every_wire_tag_serde_is_told_to_emit_is_one_the_frontend_reads() {
         // WHAT THIS CHECKS, AND WHAT IT DOES NOT, because the difference is the
         // whole honesty of it: it holds the `#[serde(rename = "…")]` attribute
         // in THIS file against the literals `src/shortcuts.ts` switches on. It
@@ -969,6 +1102,7 @@ mod tests {
         let typescript = include_str!("../../src/shortcuts.ts");
 
         let statuses = [
+            ShortcutStatus::Starting,
             ShortcutStatus::Accepted {
                 accelerator: "Ctrl+Shift+Digit2".to_owned(),
             },
@@ -1469,10 +1603,196 @@ mod tests {
         assert_eq!(never.active(), None);
         assert_eq!(never.attempted(), None);
         assert!(
-            !never.plugin_loaded,
+            !never.plugin_loaded(),
             "a launch that never loaded the plugin must be marked as such: `global_shortcut()` \
              PANICS on an unloaded plugin, and `change_capture_shortcut` reads this flag to \
              refuse rather than take the application down from an IPC thread"
+        );
+    }
+
+    // --- the state that exists before there is an answer ---------------------
+
+    #[test]
+    fn a_launch_that_has_not_decided_yet_says_so_and_claims_nothing() {
+        // The four questions a freshly managed state is asked, and the four
+        // answers that must not be guesses. `Starting` is the only one of them
+        // that is a statement; the other three are the absence of one, and each
+        // has a caller that would do damage with a wrong answer:
+        //
+        // - `attempted`  -> `describe_shortcuts` would publish a combination
+        //                   nothing has offered as though it were live;
+        // - `active`     -> `change` would ask the system to RELEASE it;
+        // - `plugin_loaded` -> `change_capture_shortcut` would reach
+        //                   `global_shortcut()`, which panics when the plugin
+        //                   was never managed, on an IPC thread.
+        let starting = CaptureShortcut::starting();
+
+        assert_eq!(
+            starting.status(),
+            ShortcutStatus::Starting,
+            "a state built before `install` ran must say it has not decided, and not borrow one \
+             of the three answers the operating system has not given"
+        );
+        assert_eq!(starting.attempted(), None);
+        assert_eq!(starting.active(), None);
+        assert!(
+            !starting.plugin_loaded(),
+            "nothing has loaded the global-shortcut plugin at the first instruction of `setup`. \
+             `change_capture_shortcut` reads this flag to decide whether it may touch the plugin \
+             at all, and `global_shortcut()` PANICS when the plugin was never managed - on an IPC \
+             thread, which takes the application down"
+        );
+    }
+
+    #[test]
+    fn what_install_answered_replaces_the_state_it_started_in() {
+        // The other half of the same fix: a state that is managed early is worth
+        // nothing if what the system answered never reaches it. Every one of the
+        // three fields is checked, and `plugin_loaded` is the one to watch - it
+        // is the field that used to be immutable, and a `record` that forgot it
+        // would leave a working shortcut permanently unchangeable, with the
+        // settings screen refusing every combination.
+        let wanted = combination("Ctrl+Alt+KeyQ");
+        let state = CaptureShortcut::starting();
+
+        state.record(Installed {
+            status: ShortcutStatus::Accepted {
+                accelerator: wanted.accelerator.clone(),
+            },
+            attempted: Some(wanted.clone()),
+            note: None,
+            plugin_loaded: true,
+        });
+
+        assert_eq!(
+            state.status(),
+            ShortcutStatus::Accepted {
+                accelerator: wanted.accelerator.clone(),
+            },
+            "what the operating system answered must replace `Starting`, or the launcher waits \
+             for ever on a shortcut that already works"
+        );
+        assert_eq!(state.attempted().as_ref(), Some(&wanted));
+        assert_eq!(state.active().as_ref(), Some(&wanted));
+        assert!(
+            state.plugin_loaded(),
+            "the plugin loaded, and a state that still says otherwise makes \
+             `change_capture_shortcut` refuse every combination the user tries"
+        );
+    }
+
+    #[test]
+    fn a_refusal_at_startup_replaces_it_too_and_leaves_nothing_registered() {
+        // The row above with a different answer, because `record` must carry
+        // WHAT HAPPENED and not just "it is over". A launch where the plugin
+        // never loaded has to come out of this with `plugin_loaded` false - the
+        // starting value, which is exactly why it needs its own row: an
+        // implementation that only ever sets the flag to `true` would be green
+        // on the test above and would take the application down here.
+        let state = CaptureShortcut::starting();
+
+        state.record(Installed {
+            status: ShortcutStatus::NotAttempted {
+                reason: "the global-shortcut plugin failed to load: no event loop".to_owned(),
+            },
+            attempted: None,
+            note: None,
+            plugin_loaded: false,
+        });
+
+        assert_eq!(
+            state.status(),
+            ShortcutStatus::NotAttempted {
+                reason: "the global-shortcut plugin failed to load: no event loop".to_owned(),
+            },
+            "a launch that failed must stop saying it is starting, or the screen shows a spinner \
+             instead of the reason"
+        );
+        assert_eq!(state.attempted(), None);
+        assert_eq!(state.active(), None);
+        assert!(!state.plugin_loaded());
+    }
+
+    #[test]
+    fn the_capture_state_is_managed_before_the_slow_part_of_setup() {
+        // THE DEFECT OF 7 SEPTEMBER 2026, and the one test in this file that
+        // would have been red the day before it was written.
+        //
+        // The windows `tauri.conf.json` declares with `"create": true` are built
+        // by TAURI'S OWN `setup`, BEFORE ours is ever called: it loops over
+        // `app.config().app.windows` and builds each one, and only afterwards
+        // does `if let Some(setup) = app.setup.take() { (setup)(app) }` run
+        // (`tauri-2.11.5/src/app.rs:2521-2535`, read in the vendored source on
+        // 7 September 2026). So the `main` webview is already loading its
+        // document, booting React and free to `invoke` while the body of our
+        // `setup` is still running.
+        //
+        // Until that day `CaptureShortcut` was managed on the LAST line of it -
+        // after `collect_displays` had enumerated the monitors and after
+        // `veil::create` had built an entire WebView2, "hundreds of
+        // milliseconds" by its own comment in lib.rs. A launcher that asked in
+        // that interval got `describe_shortcut_status`'s error and drew a red
+        // "the shortcut registry could not be read" over a shortcut that then
+        // worked perfectly. The user pressed the keys and the capture came up.
+        //
+        // WHAT IS NOT ASKED HERE, and it is the other half of the fix:
+        // `shortcut::install` must NOT move up with it. A global hotkey that is
+        // live before `Timings`, `MainWindowClaim`, `Veil` and the veil window
+        // exist is a press that lands in a half-built application. The STATE
+        // moves early; the ANSWER stays where it is.
+        //
+        // A source-reading test, like `lifecycle`'s
+        // `the_builder_asks_this_module_rather_than_deciding_for_itself` and
+        // `compositor`'s `both_gestures_are_wired_into_the_application`, with
+        // the same honest limit: it proves the order is WRITTEN, never that it
+        // ran. Nothing in this suite can run `setup` - that needs an event loop.
+        let source = include_str!("lib.rs");
+
+        let managed = source.find("CaptureShortcut::starting()").expect(
+            "lib.rs never manages a capture state at startup. Every other test in this file is \
+             then green over an application whose launcher can still be told, at the only moment \
+             it asks, that the shortcut registry could not be read",
+        );
+        let displays = source.find("collect_displays(app.handle())").expect(
+            "lib.rs must still enumerate the displays in `setup`; this test reads that \
+                     call to place the managing against it",
+        );
+        let veil = source.find("veil::create(").expect(
+            "lib.rs must still build the veil window in `setup`; this test reads that call to \
+             place the managing against it",
+        );
+        let installs = source.find("shortcut::install(").expect(
+            "lib.rs must still install the shortcut in `setup`, or nothing takes the combination \
+             from the operating system at all",
+        );
+
+        assert!(
+            managed < displays,
+            "the capture state is managed AFTER `collect_displays`, which enumerates every \
+             monitor through xcap. It has to be the FIRST instruction of `setup`: the main \
+             webview is already running by then"
+        );
+        assert!(
+            managed < veil,
+            "the capture state is managed AFTER `veil::create`, which builds a whole WebView2 - \
+             hundreds of milliseconds during which the launcher is asking. This is the defect of \
+             7 September 2026, back exactly as it was"
+        );
+        assert!(
+            managed < installs,
+            "the capture state is managed after the shortcut is installed. The point of the \
+             `Starting` state is that it exists BEFORE there is anything to put in it"
+        );
+
+        let recorded = source.find("state.record(installed)").expect(
+            "nothing in lib.rs puts what `install` answered into the managed state. The launcher \
+             would then be told `Starting` for the whole life of the process, and no refusal by \
+             Windows would ever reach the screen",
+        );
+
+        assert!(
+            installs < recorded,
+            "lib.rs records an installation before running one"
         );
     }
 }

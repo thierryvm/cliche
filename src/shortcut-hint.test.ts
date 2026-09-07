@@ -42,6 +42,9 @@ function entry(overrides: Partial<ShortcutEntry> = {}): ShortcutEntry {
 /** The status `describe_shortcut_status` returns on a machine that said yes. */
 const ACCEPTED: ShortcutStatus = { status: 'accepted', accelerator: ACCELERATOR };
 
+/** The status it returns while `setup` is still running, and nothing is decided. */
+const STARTING: ShortcutStatus = { status: 'starting' };
+
 /** The status it returns when another program is holding the combination. */
 const REFUSED: ShortcutStatus = {
   status: 'refused-by-system',
@@ -129,10 +132,54 @@ describe('hintFor', () => {
     // thing this module could say.
     const entries = [entry({ id: 'dismiss-veil', descriptionKey: 'dismissVeil' })];
 
-    expect(hintFor(read(ACCEPTED, entries))).toEqual({ state: 'unreadable' });
+    // Nothing REJECTED here - both calls answered, and what they answered
+    // cannot be drawn together. There is no backend sentence to quote, so the
+    // note is the one that ends in a full stop.
+    expect(hintFor(read(ACCEPTED, entries))).toEqual({
+      state: 'unreadable',
+      sentenceKey: 'shortcutRegistryUnreadable',
+      quotation: '',
+    });
   });
 
-  it('says so when the backend could not be read', () => {
-    expect(hintFor({ status: 'unreadable' })).toEqual({ state: 'unreadable' });
+  it('says nothing at all while the backend is still starting', () => {
+    // THE case THIS lot exists for, and the one the installed v0.1.0 got wrong:
+    // Tauri builds this window before it runs `setup`, so the launcher asks
+    // while the answer is still being decided. `starting` is « pas encore », not
+    // « échec », and drawing anything red here is the defect - over a shortcut
+    // that then works perfectly.
+    expect(hintFor(read(STARTING))).toEqual({ state: 'loading' });
+  });
+
+  it('does not read the table either while the backend is still starting', () => {
+    // `describe_shortcuts` answers from the moment the window exists, and until
+    // `install` has run it hands back the combination the SOURCE ships with -
+    // not the one the settings file holds. Drawing those keys under « prêt »
+    // would announce a combination this launch may never have offered.
+    const entries = [entry({ accelerator: 'Ctrl+Alt+F9', keys: ['Ctrl', 'Alt', 'F9'] })];
+
+    expect(hintFor(read(STARTING, entries))).toEqual({ state: 'loading' });
+  });
+
+  it('says so when the backend could not be read, and QUOTES what rejected', () => {
+    // Thierry, 7 September 2026: a French sentence, then the technical reason as
+    // it arrived. Same shape as the veil's failure toast and as the monitor
+    // read-out - the words are the backend's, in English, shown as they came.
+    expect(hintFor({ status: 'unreadable', reason: 'window main is not allowed' })).toEqual({
+      state: 'unreadable',
+      sentenceKey: 'shortcutRegistryUnreadableWithReason',
+      quotation: ' window main is not allowed',
+    });
+  });
+
+  it('draws no dangling separator when nothing said anything', () => {
+    // `confirmation.ts` settled this one already: « Échec — » with an empty tail
+    // reads as a sentence the interface failed to finish. The other form of the
+    // sentence is the one that ends in a full stop, and it is drawn alone.
+    expect(hintFor({ status: 'unreadable', reason: '' })).toEqual({
+      state: 'unreadable',
+      sentenceKey: 'shortcutRegistryUnreadable',
+      quotation: '',
+    });
   });
 });
