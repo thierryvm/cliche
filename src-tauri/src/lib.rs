@@ -5,6 +5,7 @@
 
 pub mod capture;
 pub mod clipboard;
+mod compositor;
 mod displays;
 pub mod geometry;
 pub mod ipc;
@@ -155,6 +156,31 @@ pub fn run() {
             // record, so an unmanaged claim would silently turn the tile back
             // into a capture with Cliche in the frame.
             app.manage(launch::MainWindowClaim::new());
+
+            // THE MAIN WINDOW STOPS FADING, once, here - and once is the point,
+            // exactly as it is for the veil below: this asks the compositor to
+            // change a property of a window, not to do a piece of work, and
+            // asking again on every capture would put a system call inside the
+            // path the user is waiting through.
+            //
+            // WHY IT IS DONE AT ALL: a capture started from the tile hides this
+            // window first and photographs the screen 120 ms later. Windows
+            // animates a window on its way out, and the user has twice come back
+            // with a screenshot containing Cliche itself, half transparent, over
+            // their desktop. A window that leaves in one step has no half-erased
+            // state to be caught in. `compositor.rs` holds the mechanics, the
+            // portability rule that shaped it, and - in plain words - what about
+            // all this is NOT measured.
+            //
+            // The line is PRINTED whatever the answer, success included, because
+            // it is the only evidence that exists about a mechanism no test in
+            // this repository can reach. The wording of all four outcomes lives
+            // in `compositor.rs`, where it is under test.
+            let silencing = match app.get_webview_window(ipc::MAIN_WINDOW_LABEL) {
+                Some(window) => compositor::silence_transitions(&window),
+                None => compositor::Silencing::WindowMissing,
+            };
+            println!("{}", silencing.terminal_line(ipc::MAIN_WINDOW_LABEL));
 
             // The clipboard step's own instrument, and a SEPARATE type on
             // purpose: Tauri manages state by type, and these figures must never

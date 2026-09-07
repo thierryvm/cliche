@@ -81,6 +81,31 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 # No networking crate, no telemetry, no logging backend: this application talks
 # to nobody. Startup diagnostics go to stdout, which `pnpm tauri dev` shows.
 
+# --- The FIRST native dependency of this crate, 7 September 2026 ---
+#
+# Under a TARGET table and not in `[dependencies]`, and that placement is the
+# whole portability contract of `src/compositor.rs`: on macOS and Linux this line
+# is not resolved, not fetched and not compiled. What those systems get is the
+# `#[cfg(not(windows))]` engine in that same file, which does nothing native and
+# says so.
+#
+# `0.61` and NOT a newer line, deliberately. Cargo.lock already holds
+# `windows 0.61.3` as a dependency of `tauri 2.11.5` (it is listed in tauri's own
+# dependency block there), so this caret requirement unifies onto that one copy:
+# no new crate enters the graph, and - the part that matters - the `HWND` Tauri
+# hands back from `WebviewWindow::hwnd()` is LITERALLY the type these functions
+# take. A different major line would give two incompatible types with the same
+# name, which is the trap the `image` line thirty rows above was written to avoid.
+#
+# Two features, both read on docs.rs/crate/windows/0.61.3/features on 7 September
+# 2026. `Win32_Graphics_Dwm` carries `DwmFlush`, `DwmSetWindowAttribute` and
+# `DWMWA_TRANSITIONS_FORCEDISABLED`; it lists only `Win32_Graphics` as its own
+# dependency, so `Win32_Foundation` - which is where the `HWND` those signatures
+# take is declared - is named here rather than hoped for. Features are additive
+# across the graph, so naming one Tauri may already enable costs nothing.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+
 [dev-dependencies]
 # The SAME crate and version, with `bmp` added FOR TESTS ONLY.
 #

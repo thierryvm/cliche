@@ -34,6 +34,15 @@
 //! header used to say that WHICH remedy to apply was a product decision and not
 //! the code's to take. Thierry took it on 6 September 2026: hide the window.
 //!
+//! HIDING IT WAS NOT ENOUGH, and the user said so twice. Windows animates a
+//! window on its way out, so a screen photographed 120 ms later could still hold
+//! Cliche, half transparent, over the desktop. Since 7 September 2026 this path
+//! goes through `compositor.rs`, which takes the fade away and then turns the
+//! wait below from a blind sleep into a DEADLINE - real presentations first,
+//! then only what is left of [`RECOMPOSE_SETTLE`]. The cost of a click did not
+//! change. That module's header is where the reasoning, the portability rule it
+//! obeys, and the list of what is NOT measured all live.
+//!
 //! **The global-shortcut path is untouched, and that is not an oversight.** It
 //! is the reference path of the 150 ms budget, it does not have this problem -
 //! the user is in another window when they press the keys - and putting a
@@ -73,6 +82,7 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, Webview};
 
+use crate::compositor;
 use crate::ipc;
 use crate::veil;
 
@@ -108,6 +118,20 @@ use crate::veil;
 /// click the tile, drag over the part of the screen Cliche was covering, and
 /// look at what lands on the clipboard. A ghost of the title bar in it means
 /// this number is too small.
+///
+/// # SINCE 7 SEPTEMBER 2026 IT IS A FLOOR, and the value did not move
+///
+/// [`capture_region`] no longer sleeps this long; it hands the number to
+/// `compositor::settle_after_hide` as a DEADLINE. That function waits for real
+/// presentations first and then sleeps only what is LEFT of the 120 ms, so a
+/// click on the tile costs exactly what it cost before and the evidence is
+/// bought for nothing.
+///
+/// Which is also why the number stays where it is. The compositor's answer is
+/// EVIDENCE, not proof: `compositor.rs`'s header quotes Microsoft's own page to
+/// show that a flush speaks for what THIS process queued in DirectX, and our
+/// `hide()` is not that. Nothing about waiting for presentations licenses
+/// lowering this figure, and nothing has measured it either.
 const RECOMPOSE_SETTLE: Duration = Duration::from_millis(120);
 
 /// One presentation at 60 Hz, the slower of the two refresh rates
@@ -340,24 +364,35 @@ pub fn capture_region(app: AppHandle, webview: Webview) -> Result<(), String> {
     std::thread::spawn(move || {
         let started = Instant::now();
 
-        let waited = if hide_main_window(&app) {
-            std::thread::sleep(RECOMPOSE_SETTLE);
-            RECOMPOSE_SETTLE
+        let settled = if hide_main_window(&app) {
+            // A DEADLINE, not a sleep. `settle_after_hide` waits for real
+            // presentations and then sleeps only the rest of RECOMPOSE_SETTLE,
+            // so this branch still ends a flat 120 ms after it began - see that
+            // constant's own comment, which the change of 7 September 2026 did
+            // not move by a millisecond.
+            compositor::settle_after_hide(RECOMPOSE_SETTLE)
         } else {
             // Nothing was hidden, so there is nothing to wait for. The capture
             // still happens - with Cliche in it, as it did before this lot -
             // and `hide_main_window` has already said why on the terminal.
-            Duration::ZERO
+            compositor::Settled::NOTHING
         };
 
         veil::perform_capture(&app);
 
+        // BOTH halves of the wait, and that is the point of the line. Nobody
+        // knows which of the two mechanisms is doing the work here: the
+        // presentations may cost nothing, in which case this is the blind sleep
+        // of yesterday, or they may cost most of the floor. One total would hide
+        // exactly the figure that settles it.
         println!(
             "[cliche] launch: tile capture, {total:.1} ms from hiding the window to \
-             perform_capture returning, {waited:.1} ms of it spent waiting for Windows to \
-             recompose the desktop without Cliche in it",
+             perform_capture returning; the wait for Windows to recompose the desktop without \
+             Cliche in it was {presented:.1} ms of real presentations plus {slept:.1} ms of \
+             sleep to reach the floor",
             total = started.elapsed().as_secs_f64() * 1_000.0,
-            waited = waited.as_secs_f64() * 1_000.0,
+            presented = settled.presented.as_secs_f64() * 1_000.0,
+            slept = settled.slept.as_secs_f64() * 1_000.0,
         );
     });
 
