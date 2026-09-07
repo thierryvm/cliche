@@ -193,11 +193,55 @@ Bonne nouvelle : la contrainte est presque gratuite aujourd'hui, et c'est le ver
 du lot 1d qui l'a rendue telle — le voile est resté en Tauri, donc **aucun moteur
 natif n'a été introduit**.
 
+> ⚠️ **Cette phrase a cessé d'être vraie le 7 septembre 2026.** Le premier moteur
+> natif de ce dépôt existe : `src-tauri/src/compositor.rs`. Sa section est
+> immédiatement sous ce tableau, avec son plan de portage.
+
+### Le premier morceau natif — `compositor.rs`, 7 septembre 2026
+
+**Pourquoi il a fallu en venir là.** Une capture lancée depuis la tuile du lanceur
+contenait Cliché lui-même, translucide, par-dessus le bureau — deux fois, sur deux
+binaires installés. La cause est l'animation de disparition de Windows : `hide()`
+rend la main avant que le compositeur ait fini, et le code attendait une durée fixe
+de 120 ms, qui est un pari sur une durée que rien ne mesure. Aucune API de Tauri ne
+permet ni de couper cette animation ni d'attendre une composition réelle.
+
+**Comment il respecte la contrainte.** Une interface unique, deux gestes, et un
+moteur par système :
+
+| | |
+| --- | --- |
+| Interface (portable) | `silence_transitions(&window)` et `settle_after_hide(floor)`. Les appelants — `lib.rs`, `launch.rs` — ignorent la plateforme. |
+| Moteur Windows | `#[cfg(windows)]` : `DwmSetWindowAttribute(DWMWA_TRANSITIONS_FORCEDISABLED)` et `DwmFlush`. |
+| Ailleurs | `#[cfg(not(windows))]` : un repli qui ne fait rien de natif et le DIT. `settle_after_hide` y dort le plancher entier, exactement comme le code du 6 septembre. **Le comportement n'est donc pas dégradé par le portage : il est celui d'avant.** |
+| Dépendance | `windows = "0.61"` sous `[target.'cfg(windows)'.dependencies]` — **elle n'est pas même résolue sur macOS**. Version alignée sur celle que `tauri 2.11.5` tire déjà (0.61.3), donc aucun crate neuf et le même type `HWND`. |
+
+**Plan de portage, à faire le jour où l'on compile ailleurs :**
+
+- **macOS.** L'équivalent de la coupure d'animation est
+  `NSWindow.animationBehavior = .none` (ou `NSAnimationContext` à durée nulle
+  autour de `orderOut:`). L'équivalent de l'attente est le rappel d'affichage
+  `CVDisplayLink`, ou plus simplement `NSWindow.occlusionState`. Aucun des deux
+  n'a été essayé. Accès natif via `objc2`, que `xcap` tire déjà sur cette cible.
+- **Linux.** Il n'y a pas de réponse unique : sous X11 le compositeur est
+  optionnel et `XSync` suffit souvent ; sous Wayland la capture passe déjà par
+  les portails `pipewire`, qui décident eux-mêmes de la synchronisation et où le
+  problème pourrait ne pas exister. **À mesurer avant d'écrire quoi que ce soit.**
+- **Dans les deux cas**, le repli actuel (dormir le plancher) est un point de
+  départ correct, pas une régression : c'est ce que faisait Windows avant.
+
+**Ce qui n'est pas mesuré et doit le rester en toutes lettres** : personne n'a
+observé que couper les transitions supprime le défaut. `DwmFlush` lui-même
+n'attend que les changements DirectX mis en file par l'application appelante et
+« does not flush the entire session rendering batch » (documentation Microsoft,
+lue le 7 septembre 2026) — or notre `hide()` n'en est pas un. Le plancher de
+120 ms est conservé pour cette raison précise.
+
 ### Ce qui est DÉJÀ portable — constaté, pas supposé
 
 | Élément | Constat |
 | --- | --- |
-| Notre source Rust | **Zéro** `cfg(windows)`, zéro `winapi`, zéro appel Win32 direct |
+| Notre source Rust | **Un seul** module porte du natif : `compositor.rs`, depuis le 7 septembre 2026, derrière une interface unique — voir sa section ci-dessous. Partout ailleurs : zéro `cfg(windows)`, zéro appel système. *(Cette ligne disait « zéro » partout jusqu'au 7 septembre ; elle est corrigée le jour où elle a cessé d'être vraie, pas plus tard.)* |
 | `build.rs` | Le manifeste DPI est déjà sous `#[cfg(windows)]` / `#[cfg(not(windows))]` — le motif « une interface, un moteur par système » y est déjà appliqué |
 | `xcap` 0.9.8 | Multiplateforme : dépendances `objc2*` sous macOS, `libwayshot`/`pipewire` sous Linux, toutes conditionnées par cible |
 | `tauri-plugin-global-shortcut`, `tauri-plugin-clipboard-manager` | Multiplateformes |

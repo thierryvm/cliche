@@ -122,14 +122,32 @@ fenêtre Cliché n'est ouverte = c'est un fantôme aussi.
 ### Geste 1 — la fenêtre s'ouvre — ✅ FAIT le 7 septembre 2026
 
 Lancer Cliché. **Attendu** : une fenêtre avec une barre de titre sur mesure
-(pas celle de Windows), le titre « Cliché » à gauche, et à droite deux boutons
-ronds — ⓘ (aide) et ⚙ (réglages) — puis réduire, agrandir, fermer.
+(pas celle de Windows), le titre « Cliché » à gauche, puis **trois onglets
+écrits en toutes lettres — « Capturer · Aide · Réglages » —** et enfin réduire,
+agrandir, fermer.
+
+**Un seul onglet est enfoncé à la fois**, fond plein et barre d'accent dessous.
+À l'ouverture, c'est « Capturer ».
 
 Sous le titre : **« Capturer »**, une grande tuile colorée « Capturer une zone »,
 et deux tuiles grises marquées « à venir ».
 
 > 🔴 Si la fenêtre ne s'ouvre pas du tout, ou se ferme aussitôt : note le
 > message exact. C'est le défaut le plus grave possible ici.
+
+**Ce que ces onglets remplacent, et ce qu'il faut vérifier.** Jusqu'au
+7 septembre 2026 il n'y avait que deux boutons ronds, ⓘ et ⚙, et rien ne disait
+comment revenir : depuis l'Aide, il fallait re-cliquer le bouton déjà enfoncé.
+Tu as dû double-cliquer pour retrouver l'accueil.
+
+**Le geste** : clique « Aide », puis « Réglages », puis **« Capturer »**. Tu
+dois revenir à l'accueil du premier coup, sans deviner. Si un seul de ces trois
+allers-retours demande deux clics, dis-le-moi.
+
+**Et rétrécis la fenêtre au maximum** (elle refuse de descendre sous 480 px de
+large). Les trois onglets doivent rester entiers ; c'est le titre « Cliché » qui
+doit rétrécir en premier. Vérifié en capture à 480 px, jamais dans une vraie
+fenêtre — donc si un onglet est coupé, c'est une vraie trouvaille.
 
 ### Geste 2 — la tuile
 
@@ -147,6 +165,48 @@ Coller dans Paint (`Ctrl+V`).
 > Cliché ? Elle ne devrait PAS — c'est exactement ce que le masquage ajouté le
 > 6 septembre doit empêcher. Si Cliché apparaît dans l'image, ou apparaît
 > **à moitié effacé**, l'attente de 120 ms est trop courte et il faut me le dire.
+
+#### ⚠️ C'est CE geste qui juge le correctif du 7 septembre 2026
+
+Thierry a rencontré ce défaut **deux fois**, sur les deux binaires : « tu vois
+l'outil Cliché en transparence qui empêche toute prise de screenshot convenable
+lorsque j'utilise le bouton dans l'interface de capture ». Le pari sur la durée
+de l'animation de disparition de Windows était perdu.
+
+Le correctif **coupe l'animation** au lieu de raccourcir le pari
+(`DWMWA_TRANSITIONS_FORCEDISABLED`), et attend des présentations réelles avant
+de photographier. Le délai de 120 ms n'a pas bougé d'une milliseconde : le clic
+coûte ce qu'il coûtait, l'image ne peut que s'améliorer.
+
+**RIEN DE TOUT CELA N'A ÉTÉ OBSERVÉ.** Personne n'a cliqué cette tuile depuis.
+Le seul juge est l'image collée.
+
+**Trois choses à me rapporter, dans cet ordre :**
+
+1. **Au démarrage, dans le terminal**, une ligne unique qui commence par
+   `[cliche] compositor:`. Copie-la telle quelle. Elle dit si Windows a accepté
+   de couper les transitions, ou les a refusées, et sur quelle fenêtre. Si elle
+   dit `could NOT be turned off`, le correctif n'a pas pu s'appliquer et le
+   reste ne veut rien dire.
+
+2. **L'image collée.** Cliché est-il dedans, entier, à moitié effacé, ou
+   absent ? « Absent » est la seule bonne réponse.
+
+3. **Après le collage, la ligne `[cliche] launch: tile capture, …`.** Elle porte
+   maintenant deux chiffres : le temps passé en présentations réelles, et le
+   sommeil qu'il est resté à faire pour atteindre le plancher. Copie-la.
+   C'est la première mesure de ce mécanisme, et personne ne sait encore ce que
+   les présentations coûtent.
+
+#### Et pendant la sélection, regarde la plaque du bas
+
+Une **plaque centrée**, d'environ 416 px de large, apparaît au bas de l'écran
+une fois le rectangle tracé : « Entrée ou double-clic copie · Échap annule ».
+
+Jusqu'au 7 septembre 2026 elle faisait **toute la largeur de l'écran** et elle
+était **en anglais** — c'est le « bandeau noir » que tu n'as pas compris. Si
+elle est encore pleine largeur, ou encore en anglais, le correctif n'est pas
+dans ce binaire.
 
 ### Geste 3 — le raccourci
 
@@ -292,11 +352,27 @@ attendent le prochain installeur.
 
 - **Le chemin d'installation** est annoncé au conditionnel plus haut : personne
   n'a lu l'installeur décompressé pour l'établir.
-- **Aucun des correctifs du 7 septembre n'a été vu tourner.** Que fermer la
-  fenêtre termine réellement le processus, et qu'un second lancement ramène le
-  premier au premier plan : lu dans le code et sous test, jamais observé.
+- **Le cycle de vie** — fermer la fenêtre termine bien le processus : OBSERVÉ
+  par Thierry le 7 septembre 2026 au matin. Qu'un second lancement ramène le
+  premier au premier plan reste, lui, lu dans le code et sous test, jamais vu.
+- **Que couper les transitions de Windows suffise.** Le correctif du
+  7 septembre supprime la cause probable — l'animation de disparition — mais
+  personne n'a cliqué la tuile depuis. Geste 2, et lui seul.
+- **`DwmFlush` ne prouve pas ce qu'on aimerait qu'il prouve.** Microsoft
+  l'écrit : *« DwmFlush waits for any queued DirectX changes that were queued by
+  the calling application to be drawn to the screen before returning. It does
+  not flush the entire session rendering batch. »* Notre `hide()` n'est pas un
+  changement DirectX que nous aurions mis en file. C'est une preuve de
+  présentation, pas une preuve que la fenêtre a disparu de l'image composée —
+  et c'est exactement pourquoi le plancher de 120 ms reste.
+- **Ce que coûtent les présentations réelles.** Inconnu. La ligne
+  `[cliche] launch: tile capture, …` du geste 2 est la première mesure.
+- **La barre de titre à trois onglets** n'a jamais été vue dans une vraie
+  fenêtre Tauri, seulement en navigateur. Le déplacement de la fenêtre par la
+  barre et l'absence de déplacement en cliquant un onglet reposent sur un
+  raisonnement lu dans le script de Tauri, jamais observé.
+- **La plaque d'aide du voile** n'a été vue qu'en navigateur, en la démasquant à
+  la main. Personne ne l'a vue apparaître au bon moment dans une vraie capture.
 - **Le binaire n'est pas signé** : SmartScreen avertira, chez toi comme chez
   n'importe qui d'autre.
 - **Le budget de latence après le passage en fenêtre transparente** — section 6.
-- **Que 120 ms suffisent** pour que Windows ait fini de redessiner l'écran sans
-  Cliché — c'est le geste 2 qui tranche, et lui seul.
