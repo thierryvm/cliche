@@ -111,6 +111,32 @@
      comment applies in the other direction. */
   --c-keymap-action-min: 10rem;
 
+  /* ---- added 7 September 2026, with the help and settings screens -------- */
+
+  /* 544 px. The column the two READING screens are set in — the help and the
+     settings.
+
+     WHY A CAP AT ALL. Thierry, 7 September 2026: « l'aide et les réglages se
+     lisent comme vides ». They are not empty, they are SHORT — one field, or
+     one key map — and a short screen stretched across a 900 px window reads as
+     a screen somebody forgot to finish. A measure is what makes it read as
+     finished instead.
+
+     THE ARITHMETIC, and the first line of it is that this cap costs nothing at
+     the size that matters: 480 − 2 × --gutter = 448 px of content at the
+     window's declared minimum, so the column is the whole budget there and this
+     value does nothing. It starts to bite at 544 + 2 × 16 = 576 px of window,
+     and above that the column stops growing while the window goes on.
+
+     WHY 544. It is the upper end of the 45–75 character measure, at
+     --size-body: ~68 characters, ESTIMATED at 0.5em per character for Segoe UI
+     Variable Text. That estimate is not a measurement and is written as one
+     rather than dressed up — nothing in this repository can measure a glyph.
+
+     A COMPONENT CONSTANT and not a token, by --c-keymap-action-min's own test:
+     no file outside src/design/ has to agree on this number. */
+  --c-screen-max: 34rem;
+
   /* SHOWCASE SCAFFOLDING ONLY — the two widths the V1 screens are judged at.
      30rem = 480 px is `minWidth` in src-tauri/tauri.conf.json, MIRRORED here
      and not derived: nothing tests that the two agree. That is the same fact
@@ -771,6 +797,32 @@
   opacity: 1;
 }
 
+/* THE COLUMN THE SCREEN IS READ IN — the block .c-screen__name belongs to.
+   Capped and centred, and that is the whole rule: --c-screen-max carries the
+   arithmetic, including why it changes nothing at 480 px.
+   NO @media, and none is missing: below the cap the column IS the content
+   budget, above it the column stops. Switching on a width would be a second
+   place to state a number this file already states once — the header's rule. */
+.c-screen {
+  max-inline-size: var(--c-screen-max);
+  margin-inline: auto;
+}
+
+/* THE SENTENCE UNDER THE NAME — what the screen holds today, and what is
+   coming to it. One rule, two users, exactly like .c-screen__name and
+   .c-showcase__title above: the showcase's lede under its h1 is the same
+   decision as a screen's perimeter under its name, and a second copy of these
+   three declarations is a second decision waiting to drift.
+   --text-muted is the token whose own comment reads « the sentence under a
+   title », and it is measured on all five opaque surfaces. It is NOT on the
+   glass here: this line lives in the body, never in the title bar. */
+.c-screen__lede,
+.c-showcase__lede {
+  margin: var(--space-2) 0 0;
+  color: var(--text-muted);
+  opacity: 1;
+}
+
 .c-shell {
   position: relative;
   /* The fallback is the product: a window is as tall as its viewport, in dvh
@@ -871,6 +923,112 @@
   font-size: var(--size-caption);
   font-weight: var(--weight-regular);
   line-height: var(--leading-tight);
+}
+
+/* ==================================================================== *
+ * THE TABS — « Capturer · Aide · Réglages », added 7 September 2026.
+ *
+ * WHAT THEY REPLACE. The bar carried two icon-only toggles (ⓘ and ⚙) with
+ * aria-pressed. From the help, the way back was to press the already-pressed ⓘ
+ * a second time — a move nobody guesses; Thierry double-clicked the bar looking
+ * for it. The criterion is now literal: the way back to the capture must be
+ * understandable ON A SCREENSHOT of the help screen. That rules out mute
+ * glyphs, so the tabs carry their words.
+ *
+ * NOT A NEW BUTTON. A tab is `c-btn c-titlebar__tab`: --hit-min, the shared
+ * focus ring and the button's geometry come from .c-btn, and the pressed state
+ * is `.c-btn[aria-pressed='true']` — --surface-selected plus the inset accent
+ * bar this file already publishes as « outil actif ». Nothing new is drawn, and
+ * no colour is created.
+ *
+ * AND DELIBERATELY NOT .c-btn--ghost, which is what a window control wears.
+ * The ghost's hover spends `box-shadow: var(--elev-1)` — the SAME property the
+ * pressed bar is drawn with, and at (0,3,0) against the pressed rule's (0,2,0).
+ * On a control that can BE pressed, the ghost hover therefore erases the accent
+ * bar under the pointer: the active tab would stop looking active exactly when
+ * it is aimed at. READ FROM THE CASCADE IN THIS FILE, not observed in a window.
+ * The same reading says the two toggles being replaced already had that defect,
+ * through `.c-btn--ghost.c-winbtn:hover` — which is why the repair is a
+ * different composition and not a fourth hover rule.
+ *
+ * WHAT IS PAINTED ON THE GLASS HERE, against this section's own short list:
+ * --text as the label, which is one of the two allowed and is measured on all
+ * three glass regimes (8.75:1 at worst, dark theme over white). The pressed tab
+ * is an OPAQUE fill, which replaces the glass in its own rectangle, so the pair
+ * measured is --text on --surface-selected — 13.52:1 light, 10.75:1 dark, both
+ * printed by scripts/check-contrast.mjs on every run.
+ *
+ * ---- THE WIDTH IS THE RISK, AND IT IS ARITHMETIC, NOT A MEDIA QUERY --------
+ *
+ * At the window's declared minimum of 480 px (src-tauri/tauri.conf.json):
+ *
+ *     480
+ *   −  16   --space-4           padding-inline-start of the bar
+ *   −   4   --focus-ring-space  padding-inline-end of the bar
+ *   −  16   2 × --space-2       the bar's own gaps: title | tabs | controls
+ *   − 132   3 × --hit-min       minimise, maximise, close
+ *   = 312   left for the title AND the three tabs
+ *
+ * A tab costs its label plus 26 px of chrome: 2 × --space-3 of padding-inline
+ * and 2 × --c-border-width of the transparent border, both from .c-btn, which
+ * is not overridden here. The labels are ESTIMATED — nothing in this repository
+ * can measure a glyph — at 0.5em per character for Segoe UI Variable Text at
+ * --size-body, i.e. 8 px:
+ *
+ *     « Capturer »  8 × 8 = 64  + 26 =  90
+ *     « Aide »      4 × 8 = 32  + 26 =  58
+ *     « Réglages »  8 × 8 = 64  + 26 =  90
+ *     2 × --space-1 between them      =   8
+ *     the group                       = 246
+ *
+ * which leaves 66 px for the title. « Cliché » at --size-caption is about
+ * 6.4 px per character, some 40 px, so it fits with roughly 26 px of slack —
+ * the estimate would have to be a third low before anything moved. And when it
+ * does move, the TITLE is what gives, by construction: .c-titlebar__title is
+ * `flex: 1 1 auto` with `min-inline-size: 0` and an ellipsis, while the tabs
+ * and the controls are `flex: none`. NOT MEASURED IN A WINDOW — to be looked at
+ * at 480 px.
+ *
+ * AT 375 PX IT DOES NOT FIT, said plainly rather than patched: the same
+ * subtraction leaves 207 px against the group's 246. The title collapses to its
+ * ellipsis first, then .c-shell's `overflow: hidden` clips the trailing 39 px
+ * of the group. 375 px is NOT reachable in the product — minWidth is 480 — but
+ * the showcase draws a 375 px frame, and the caption there says so.
+ * ==================================================================== */
+
+.c-titlebar__tabs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  /* The same hole in the drag region .c-titlebar__controls carries, and for
+     the same reason: without it a press on « Aide » moves the window instead of
+     changing screen. The other half of that decision is the ABSENCE of
+     `data-tauri-drag-region` on the buttons — see the head of src/TitleBar.tsx
+     for the walk that makes a bare BUTTON stop the drag. */
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.c-titlebar__tab {
+  flex: none;
+  /* A tab label folds nowhere. Two words at most, and a label wrapped over two
+     lines inside a 52 px bar is a broken bar; when there is no room, the title
+     is what gives. */
+  white-space: nowrap;
+}
+
+/* --surface-selected and not --surface-raised, for the reason .c-winbtn's own
+   hover rule states: what passes behind this bar is our own near-white page,
+   and --surface-raised composited through the glass is indistinguishable from
+   it — the hover would simply not appear.
+   NO box-shadow HERE, unlike that rule, and that is the whole point of the
+   composition above: this control can be pressed, and the pressed bar IS a
+   box-shadow. The tie with `.c-btn[aria-pressed='true']` — both (0,2,0) — is
+   settled by order, this rule being later, and it sets the same fill anyway. */
+.c-titlebar__tab:hover,
+.c-titlebar__tab.is-hover {
+  background-color: var(--surface-selected);
 }
 
 .c-titlebar__controls {
@@ -1246,6 +1404,69 @@
 }
 
 /* ==================================================================== *
+ * THE VEIL'S KEYBOARD LINE — « Entrée ou double-clic copie · Échap annule »,
+ * the one piece of chrome laid over the frozen screen.
+ *
+ * IT MOVED HERE FROM veil.html ON 7 SEPTEMBER 2026. It was a hand-drawn plate
+ * in that document's inline stylesheet, running from --gutter to --gutter: on a
+ * 1920 px screen, a 1888 px black band lying across the taskbar. Thierry met it
+ * on the installed v0.1.0 — « le bandeau noir visible en bas sur toute la
+ * largeur, je ne vois pas pourquoi et à quoi il sert ! ». A plate no page could
+ * publish is a plate nobody had ever looked at; it is published now, in
+ * src/design/Showcase.tsx, section s-veil.
+ *
+ * SO IT TAKES THE TOAST'S DISCIPLINE: --c-toast-max, centred. That constant is
+ * this system's existing answer to the same question — how wide may a message
+ * at the foot of a screen get — and its comment says why a cap and not a width.
+ * The two also land in the same place, --space-5 off the bottom edge, which
+ * costs nothing to keep true: the plate and the toast are mutually exclusive in
+ * src/veil/main.ts and are never on screen together.
+ *
+ * FOUR PROPERTIES ARE FORBIDDEN ON THIS PLATE, and the reason is mechanical
+ * rather than stylistic: transform, backdrop-filter, will-change and any
+ * opacity below 1 make the compositor build a layer AT PARSE — and this
+ * stylesheet is parsed during the veil's PREHEAT, so the veil's own paint would
+ * fall back inside the interval lot 1d measures. Hence `margin-inline: auto`
+ * and never `left: 50%; transform: translateX(-50%)`, and an OPAQUE plate
+ * rather than a tinted one. src/documents.test.ts fails if any of them appears
+ * in the veil's own stylesheet; it CANNOT see this file — `?raw` on a CSS file
+ * arrives empty under Vitest, measured again on 7 September 2026 — which is
+ * why they are named here as a rule rather than only gated there.
+ *
+ * ITS COLOURS ARE THE VEIL'S, theme-independent by decision in tokens.css:
+ * --veil-stroke-light on --veil-stroke-dark is white on black, 21:1, and it
+ * owes nothing to the screenshot underneath because the plate is opaque. The
+ * two-tone ring is what separates it from a black desktop.
+ * ==================================================================== */
+
+.c-veil-hint {
+  /* `absolute`, like .c-toast-region and for the same reason: in a window it
+     is positioned against the shell. veil.html restates `fixed` in its own
+     document, where there is no positioned ancestor and the foot of the SCREEN
+     is what is meant. */
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: var(--space-5);
+  /* THE CENTRING, and it builds no layer: with both inset-inline edges at 0
+     and a max, the used width is capped and the two auto margins are solved
+     equal — CSS 2.1 §10.3.7. A translate would have cost a compositor layer at
+     parse, which is the one thing this element may not cost. */
+  margin-block: 0;
+  margin-inline: auto;
+  max-inline-size: var(--c-toast-max);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--veil-stroke-dark);
+  color: var(--veil-stroke-light);
+  box-shadow: 0 0 0 var(--veil-stroke-width) var(--veil-stroke-light);
+  font-family: var(--font-text);
+  font-size: var(--size-caption);
+  line-height: var(--leading-normal);
+  text-align: center;
+  /* The plate must never eat the drag that is happening over it. */
+  pointer-events: none;
+}
+
+/* ==================================================================== *
  * SHORTCUT RECORDER — the settings control that listens for the next
  * combination.
  *
@@ -1347,14 +1568,10 @@
   margin-inline: auto;
 }
 
-/* .c-showcase__title is declared with .c-screen__name, in the WINDOW SHELL
-   section above: the page's h1 and a screen's name are one decision. */
-
-.c-showcase__lede {
-  margin: var(--space-2) 0 0;
-  color: var(--text-muted);
-  opacity: 1;
-}
+/* .c-showcase__title is declared with .c-screen__name, and .c-showcase__lede
+   with .c-screen__lede, both in the WINDOW SHELL section above: the page's h1
+   and a screen's name are one decision, and so are the two sentences under
+   them. */
 
 .c-section {
   margin-block-start: var(--space-6);

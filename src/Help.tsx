@@ -99,8 +99,15 @@ export default function Help() {
     read.status === 'read' ? helpSections(read.entries) : [];
 
   return (
-    <>
+    /* `.c-screen` is the measure, added 7 September 2026: this screen is SHORT,
+       and a short screen stretched across a 900 px window reads as an empty
+       one. The cap and its arithmetic are --c-screen-max in components.css. */
+    <div className="c-screen">
       <h1 className="c-screen__name">{UI_STRINGS.helpTitle}</h1>
+      {/* WHAT THIS SCREEN IS, before the first row of it. The showcase
+          publishes the sentence under the same name, section s-keymap; the
+          material is `.c-screen__lede`, shared with the showcase's own lede. */}
+      <p className="c-screen__lede">{UI_STRINGS.helpLede}</p>
 
       {read.status === 'reading' && (
         <p className="c-hint" style={BLOCK_GAP} aria-busy="true">
@@ -153,6 +160,6 @@ export default function Help() {
       <div style={BLOCK_GAP}>
         <DisplaysProbe />
       </div>
-    </>
+    </div>
   );
 }

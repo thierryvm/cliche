@@ -1,5 +1,14 @@
 <!doctype html>
-<html lang="en">
+<!--
+  `fr`, and it was `en` until 7 September 2026. The attribute was simply false:
+  this document shows « copié » and « Échec », written by src/veil/main.ts from
+  src/strings.ts, and since today it shows the keyboard line in French too. A
+  `lang` is not decoration — it is what a screen reader picks a voice from, and
+  a previous run cited this very attribute as a reason NOT to write « Échec »
+  here. The reasoning was sound and the conclusion upside down: the attribute
+  was the thing that was wrong.
+-->
+<html lang="fr">
   <head>
     <meta charset="UTF-8" />
     <title>Cliché veil</title>
@@ -37,7 +46,12 @@
       clipboard refuses, with a failure that stays until it is dismissed - and
       that message is a component the design system already publishes,
       `c-note c-note--success c-toast` (src/design/Showcase.tsx, section
-      s-toast). The alternative was to restate `.c-note`, `.c-toast`,
+      s-toast). SINCE 7 SEPTEMBER 2026 there is a second consumer, and it is the
+      same argument arriving from the other end: the keyboard line was drawn
+      here, full width, and it took a user reading it as a rendering artefact to
+      notice that no page in this repository had ever shown it. It is
+      `.c-veil-hint` now, published in section s-veil. The alternative was to
+      restate `.c-note`, `.c-toast`,
       `.c-toast-region`, `.c-toast__message`, `.c-toast__dismiss`, `.c-btn`,
       `.c-btn--ghost`, `.c-btn--icon` and `.c-btn__glyph` here - eight
       components copied into a page nobody would think to update, which is the
@@ -50,12 +64,21 @@
       on a document of fourteen elements, at every style recalculation.
 
       WHAT IT DOES NOT BRING IN, checked rather than assumed: components.css
-      declares no `html`, `body` or `*` rule (its only top-level block is a
-      `:root` of four component constants), so nothing in it repaints this
-      document or changes its layout. Its one `backdrop-filter` belongs to
-      `.c-glass, .c-titlebar`; neither class exists in this file, and a rule
-      that matches no element builds no compositor layer. It has no @import,
-      no url() and no @font-face, so it adds no request.
+      declares no `html`, `body` or `*` rule. Two of its blocks select something
+      other than a class - a `:root` carrying the component constants, and the
+      `[hidden] { display: none !important }` guard of 7 September 2026, which
+      this document depends on rather than suffers - so nothing in it repaints
+      this document or changes its layout. (This read "a :root of four component
+      constants" until today. It was already stale - there were ten in that
+      block, and today's --c-screen-max makes eleven - and a figure nobody
+      maintains is worse than no figure, so it is gone.) Its one
+      `backdrop-filter` belongs to `.c-glass,
+      .c-titlebar`; neither class exists in this file, and a rule that matches
+      no element builds no compositor layer. `.c-veil-hint`, which this document
+      DOES use, declares none of the four properties that build a layer at parse
+      - the rule above it in that file names them, and src/documents.test.ts
+      holds this document to the same ban. It has no @import, no url() and no
+      @font-face, so it adds no request.
 
       The rules below are inline rather than a third stylesheet: they are
       specific to this document and a separate file would be one more request.
@@ -417,44 +440,39 @@
       /*
        * THE KEYBOARD LINE.
        *
-       * COST AT OPENING: ZERO, and that is a hard constraint rather than a
-       * preference. It is in the document from the preheat wearing `hidden`,
-       * exactly like #selection, and it is not unhidden until the first pointer
-       * release - which is far behind `painted`. The measured p95 leaves 15.7 ms
-       * of margin on the 150 ms budget.
+       * EVERYTHING ABOUT THE PLATE ITSELF - its colours, its ring, where it
+       * sits, how wide it may get and why it may not be centred with a
+       * transform - is `.c-veil-hint` in src/design/components.css, linked
+       * above. NOTHING of it is restated here. This document owed it two lines
+       * and no more, for exactly the reasons the toast's own four are listed
+       * below.
        *
-       * FORBIDDEN ON THIS CHROME, all of it, for one mechanical reason:
-       * backdrop-filter, transform, will-change and any opacity below 1 make
-       * the compositor build a layer AT PARSE - during the preheat - and the
-       * veil's paint would fall back into the interval lot 1d measures. Hence
-       * `left`/`right`/`bottom` here and never a translate, and an OPAQUE
-       * plate rather than a tinted one.
+       * IT WAS DRAWN HERE, IN FULL, UNTIL 7 SEPTEMBER 2026, and that is what
+       * went wrong: `left: var(--gutter); right: var(--gutter)` is a 1888 px
+       * black band on a 1920 px screen, laid across the taskbar. A plate no
+       * page could publish is a plate nobody had ever looked at - the showcase
+       * draws it now, section s-veil.
        *
-       * CONTRAST: white on black is 21:1, and it does not depend on the
-       * screenshot underneath because the plate is opaque. The two-tone ring is
-       * what separates the plate from a black desktop.
+       * COST AT OPENING: ZERO, unchanged, and that is a hard constraint rather
+       * than a preference. It is in the document from the preheat wearing
+       * `hidden`, exactly like #selection, and it is not unhidden until the
+       * first pointer release - which is far behind `painted`. The measured p95
+       * leaves 15.7 ms of margin on the 150 ms budget.
        *
        * IT USED TO SHARE THESE RULES WITH `#notice`, a hand-drawn plate that
        * showed whatever Rust refused. That element is GONE as of 5 September
        * 2026: the same job is now done by the system's own toast, below, which
        * is measured, published in the showcase, and carries a way out.
        */
+
+      /* WHERE IT IS ANCHORED, and nothing else. `.c-veil-hint` is `absolute`,
+         which in the application resolves against the window shell. This
+         document has no positioned ancestor, so `fixed` states what is meant -
+         the foot of the SCREEN - rather than relying on the initial containing
+         block happening to be the same rectangle. Same line, same reason, as
+         #toast-region below. */
       #hint {
         position: fixed;
-        left: var(--gutter);
-        right: var(--gutter);
-        bottom: var(--space-5);
-        margin: 0;
-        padding: var(--space-2) var(--space-3);
-        background: var(--veil-stroke-dark);
-        color: var(--veil-stroke-light);
-        box-shadow: 0 0 0 var(--veil-stroke-width) var(--veil-stroke-light);
-        font-family: var(--font-text);
-        font-size: var(--size-caption);
-        line-height: var(--leading-normal);
-        text-align: center;
-        /* The plate must never eat the drag that is happening over it. */
-        pointer-events: none;
       }
 
       /*
@@ -479,8 +497,13 @@
          src/styles.css gives the application `* { box-sizing: border-box }`;
          this document must not load that file. Without the rule, `.c-toast`'s
          `inline-size: 100%` measures the CONTENT box and the toast overflows
-         its region by twice its padding plus twice its border. Scoped to the
-         toast, so nothing else in this document changes. */
+         its region by twice its padding plus twice its border. The keyboard
+         line joined this rule on 7 September 2026 for the same arithmetic: its
+         cap is --c-toast-max, and under `content-box` the plate would measure
+         that plus twice its --space-3 padding - 440 px where the toast beside
+         it is 416, two elements that are meant to look like one. Scoped to
+         those two subtrees, so nothing else in this document changes. */
+      #hint,
       #toast-region,
       #toast-region * {
         box-sizing: border-box;
@@ -584,11 +607,17 @@
       from the preheat: see the note above its rules for why nothing may be
       built at capture time.
 
-      The wording is English, like the rest of this line's audience - it names
-      two keys. The separator is an entity rather than the character itself, so
-      this file stays ASCII whatever writes it.
+      IT CARRIES NO WORDING, since 7 September 2026. It used to hold « Enter or
+      double-click copies · Esc cancels », typed here - the ONE sentence of this
+      product that never passed through src/strings.ts, and the only one still
+      in English in a French interface. It is written once during the preheat by
+      src/veil/main.ts, from UI_STRINGS.veilHint, exactly as the dismiss
+      button's aria-label beside it is. An element nothing writes into would be
+      the 7 September defect over again - an empty box at the foot of every
+      capture - so src/documents.test.ts holds both halves: no sentence here,
+      and a sentence written there.
     -->
-    <p id="hint" hidden>Enter or double-click copies &#160;&#183;&#160; Esc cancels</p>
+    <p id="hint" class="c-veil-hint" hidden></p>
     <!--
       THE TOAST. One element for both outcomes, and the choice is worth stating
       because the other one was tried on paper first.

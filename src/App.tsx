@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 
 import Help from './Help';
 import Launcher from './Launcher';
+import { screenFor, screenTabs } from './screen-tabs';
 import Settings from './Settings';
 import TitleBar from './TitleBar';
 import Showcase from './design/Showcase';
@@ -26,26 +27,12 @@ import './design/components.css';
 /** The design system page. Draws every state; calls nothing. */
 const SHOWCASE_ROUTE = '#/systeme';
 
-/**
- * The help screen: the shortcut registry, and the monitor read-out under it.
- *
- * Reached from the title bar and from nowhere else - the control there is what
- * makes this route exist for somebody who is not reading this file. A screen
- * with no way in is a screen that does not exist.
- */
-const HELP_ROUTE = '#/aide';
-
-/**
- * The settings screen: the capture combination, and the control that changes it.
- *
- * Reached from the title bar, exactly like the help and for the same reason -
- * the control there is what makes this route exist for somebody who is not
- * reading this file. ASCII in the hash, deliberately: a fragment is part of a
- * URL, and a non-ASCII one is liable to come back from `location.hash`
- * percent-encoded while the literal it is compared against is not. Avoided
- * rather than measured - « reglages » costs nothing and settles the question.
- */
-const SETTINGS_ROUTE = '#/reglages';
+/* THE OTHER THREE ROUTES ARE NOT DECLARED HERE any more, since 7 September
+   2026. They live in `src/screen-tabs.ts`, with the tabs that lead to them: the
+   control that SENDS you to a screen and the switch that decides what is drawn
+   there must not be able to disagree, and they were two lists in two halves of
+   this file. The showcase route stays because it is the one destination with no
+   tab - it renders no chrome at all. */
 
 /** The name in the title bar. The product's NAME, so not in the catalogue. */
 const WINDOW_TITLE = 'Cliché';
@@ -72,31 +59,27 @@ export default function App() {
     return <Showcase />;
   }
 
-  const onHelp = route === HELP_ROUTE;
-  const onSettings = route === SETTINGS_ROUTE;
+  const screen = screenFor(route);
 
   return (
     <div className="c-shell">
       <TitleBar
         title={WINDOW_TITLE}
-        helpOpen={onHelp}
-        onToggleHelp={() => {
+        tabs={screenTabs(route)}
+        onGoTo={(hash) => {
           // The hash IS the state, so the browser's own back button keeps
-          // working and the screen survives a reload. Writing '' clears the
-          // fragment, which `useHashRoute` reads as the launcher.
-          window.location.hash = onHelp ? '' : HELP_ROUTE;
-        }}
-        settingsOpen={onSettings}
-        onToggleSettings={() => {
-          window.location.hash = onSettings ? '' : SETTINGS_ROUTE;
+          // working and the screen survives a reload. The launcher's hash is
+          // '', which clears the fragment and is what `screenFor` reads as the
+          // home screen.
+          window.location.hash = hash;
         }}
       />
-      {/* Two toggles, one body: pressing one while the other is up SWAPS the
-          screen rather than needing the first to be released. That falls out of
-          writing the hash - the control that is not pressed writes its own
-          route - and it is why neither needs to know about the other. */}
+      {/* Three tabs, one body, and no toggling left: each tab writes ITS OWN
+          hash, so going from the help to the settings is one press rather than
+          two, and « Capturer » is a way home that is written on the screen
+          instead of being a second press on the control you are already on. */}
       <div className="c-shell__body">
-        {onSettings ? <Settings /> : onHelp ? <Help /> : <Launcher />}
+        {screen === 'settings' ? <Settings /> : screen === 'help' ? <Help /> : <Launcher />}
       </div>
     </div>
   );

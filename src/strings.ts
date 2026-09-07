@@ -68,6 +68,29 @@ export const UI_STRINGS = {
   windowRestore: 'Restaurer',
   windowClose: 'Fermer',
 
+  /* The veil: the one line of chrome laid over the frozen screen.
+
+     IT SPOKE ENGLISH UNTIL 7 SEPTEMBER 2026, and it was typed straight into
+     `veil.html` - the only sentence of this product that never passed through
+     this file. Thierry met it on the installed v0.1.0 and read it as a
+     rendering artefact: « le bandeau noir visible en bas sur toute la largeur,
+     je ne vois pas pourquoi et à quoi il sert ! ». Being in the wrong language
+     was the first reason it said nothing to him.
+
+     THE TWO SPACES AROUND THE SEPARATOR ARE ORDINARY U+0020, and the markup
+     they replace used `&#160;`. That is a LOSS, stated rather than hidden: the
+     agent that moved this sentence could not write a U+00A0 into a file - every
+     one it emitted came back folded to U+0020, checked with
+     `rg "copie\x{00A0}"` and again with `rg "copie\x20"`. Nothing else in the
+     catalogue carries one either (`rg -c "\x{00A0}" src/` finds exactly one
+     character in the whole tree, in `src/Launcher.tsx`), so the line is
+     consistent with its neighbours rather than half-repaired.
+     TO PUT THEM BACK, edit BOTH sides - here and in `src/design/Showcase.tsx`.
+     `scripts/check-strings.mjs` compares character for character and does not
+     collapse a non-breaking space, so changing one side alone fails the suite,
+     which is the safety net for that edit. */
+  veilHint: 'Entrée ou double-clic copie · Échap annule',
+
   /* The confirmation that follows a capture, and the failure that replaces it.
      `copied` is ONE WORD on purpose: the showcase writes
      `<span class="c-num">933×577</span> copié`, so the sentence is a figure the
@@ -87,6 +110,14 @@ export const UI_STRINGS = {
      recorder it belongs to. Same method Thierry settled on that morning for
      « Aide ». */
   settingsTitle: 'Réglages',
+  /* WHAT THIS SCREEN IS, in one line under its name. Added 7 September 2026:
+     one field in a 900 px window reads as a screen somebody forgot to finish,
+     and the missing information is the PERIMETER - what is here now, and what
+     is coming to this screen and not to another.
+     EVERY FUTURE IT NAMES IS IN `docs/PRD.md` §3 as INDISPENSABLE v1: the PNG
+     save with its « ne pas enregistrer automatiquement » switch, and retention
+     with definitive erasure. No date is promised, because none is known. */
+  settingsLede: "Un seul réglage aujourd'hui : la combinaison qui déclenche la capture. L'enregistrement automatique des captures et leur durée de rétention viendront ici.",
   shortcutFieldLabel: 'Raccourci de capture',
   shortcutChange: 'Modifier',
   shortcutListening: 'Appuyez sur une combinaison…',
@@ -122,6 +153,16 @@ export const UI_STRINGS = {
      completed, not the rule bent. The word now exists there, as a
      `c-screen__name`, the way « Capturer » does for the launcher. */
   helpTitle: 'Aide',
+  /* Same line, same day, same reason as `settingsLede` above: this screen shows
+     one registered combination and a list of monitors, and without a word about
+     its perimeter it reads as an empty page rather than a short one.
+     THE THREE FUTURES IT NAMES ARE THE PRD'S, not this file's: the annotation
+     editor and the local library are §3 INDISPENSABLE v1, the scrolling page
+     capture is §3 SOUHAITABLE v1. They belong in a sentence about the HELP
+     because this screen derives from the shortcut registry - a capability that
+     binds a combination shows up here on its own, which is lot 2's whole
+     point. */
+  helpLede: "Pour l'instant, cette page dit deux choses : les raccourcis enregistrés, et les écrans que cette machine expose. L'éditeur d'annotation, la bibliothèque et la capture de page défilante y ajouteront leurs lignes.",
   helpCategoryCapture: 'Capture',
   dismissVeil: 'Fermer le voile sans capturer',
   captureWindowUnderPointer: 'Capturer la fenêtre sous le pointeur',
