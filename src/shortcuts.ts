@@ -42,10 +42,10 @@ export type ShortcutCategory = 'capture';
  * capture combination, at startup, on this machine.
  *
  * Mirrors `ShortcutStatus` in `src-tauri/src/shortcut.rs`, which serialises
- * internally tagged on `status`. The three literals below are the ones Rust is
- * told to emit, and a Rust test - `the_three_wire_tags_are_the_ones_serde_is_
- * told_to_emit_and_the_frontend_reads` - reads THIS file to hold the two sides
- * together. TypeScript cannot: the value arrives at run time.
+ * internally tagged on `status`. The literals below are the ones Rust is told
+ * to emit, and a Rust test - `every_wire_tag_serde_is_told_to_emit_is_one_the_
+ * frontend_reads` - reads THIS file to hold the two sides together. TypeScript
+ * cannot: the value arrives at run time.
  *
  * # The registry is a promise, this is what became of it
  *
@@ -59,6 +59,21 @@ export type ShortcutCategory = 'capture';
  * is decided in `src/shortcut-hint.ts`, from the catalogue.
  */
 export type ShortcutStatus =
+  /**
+   * Nothing has been decided yet: `setup` is still running, on the Rust side.
+   *
+   * NOT a failure, and that distinction is the whole reason this arm exists.
+   * Tauri builds this window before it runs `setup`, so the launcher boots and
+   * asks while the backend is still enumerating monitors and building the
+   * veil - and until 7 September 2026 that call came back an ERROR, which was
+   * drawn as a red "the shortcut registry could not be read" over a shortcut
+   * that worked. What is on the screen has to be what happened.
+   *
+   * No `accelerator`: which combination will be offered is read from the
+   * settings file further down `setup`, and a field filled in with a guess is
+   * what the Rust side refuses everywhere else.
+   */
+  | { readonly status: 'starting' }
   /** The system took the combination. The shortcut works. */
   | { readonly status: 'accepted'; readonly accelerator: string }
   /** The system refused it - another program is holding it. */

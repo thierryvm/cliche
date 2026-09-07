@@ -543,7 +543,7 @@ export default function Showcase() {
         </Section>
 
         {/* ---------------------------------------------------------- */}
-        <Section id="s-hint" label="V1 · le rappel du raccourci — trois états d'information">
+        <Section id="s-hint" label="V1 · le rappel du raccourci — quatre états d'information">
           <div className="c-panel c-stack">
             <Specimen caption="prêt · le raccourci est enregistré" wide>
               <p className="c-hint">
@@ -565,6 +565,31 @@ export default function Showcase() {
                   <span className="c-num">Ctrl + Maj + 2</span> est tenu par une autre
                   application. Cliché tourne sans son raccourci ; les trois actions restent
                   utilisables à la souris.
+                </span>
+              </div>
+            </Specimen>
+            {/* LE QUATRIÈME ÉTAT, publié le 7 septembre 2026. Il existait déjà à
+                l'écran — c'est le bandeau que la v0.1.0 installée montrait au
+                démarrage — mais cette page ne l'avait jamais dessiné, et une
+                phrase qu'on n'a pas regardée est une phrase que personne n'a
+                décidée.
+                CE QUI EST NOUVEAU : la raison. Thierry, ce jour-là : une phrase
+                française, puis la raison technique telle qu'elle arrive. Les
+                mots anglais ci-dessous sont ceux du backend, cités, jamais
+                traduits — même règle que le relevé des écrans (section
+                s-diagnostic) et que le toast d'échec du voile.
+                Quand rien n'est cité, c'est la variante à point final qui est
+                dessinée, section s-recorder : « lu : » suivi de rien serait une
+                phrase que l'interface n'a pas finie. */}
+            <Specimen
+              caption="illisible · la phrase est française, la citation ne l'est pas. Sans raison à citer, c'est la variante à point final (section s-recorder) qui est dessinée."
+              wide
+            >
+              <div className="c-note c-note--danger" role="alert">
+                <Glyph d={ICON.alert} />
+                <span>
+                  <strong>Échec</strong> — Le registre des raccourcis n&apos;a pas pu être lu :
+                  window main is not allowed to call describe_shortcut_status
                 </span>
               </div>
             </Specimen>

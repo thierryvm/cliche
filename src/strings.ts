@@ -124,6 +124,20 @@ export const UI_STRINGS = {
   shortcutEscapeCancels: 'Échap annule.',
   shortcutUnavailable: 'Indisponible',
   shortcutRegistryUnreadable: "Le registre des raccourcis n'a pas pu être lu.",
+  /* THE SAME SENTENCE IN ITS QUOTING FORM, added 7 September 2026. Not a second
+     wording: the one above ENDS a note, this one INTRODUCES the words of
+     whatever rejected - `describe_shortcut_status`'s own error string, in
+     English, shown as it arrived. `displaysUnreadable` below is the same pair of
+     shapes for the same reason, and it is the precedent this follows.
+     WHY BOTH ARE KEPT rather than merged into the colon form: a rejection can
+     carry nothing readable, and « lu : » with an empty tail is a sentence the
+     interface failed to finish. `src/veil/confirmation.ts` settled that rule and
+     `hintFor` in `src/shortcut-hint.ts` is what picks between the two.
+     The space before the colon is an ORDINARY U+0020, like the one in
+     `displaysUnreadable`: the whole tree holds exactly one non-breaking space
+     (see the `veilHint` note above), and a lone U+00A0 here would be a
+     typographic rule applied in one place out of two. */
+  shortcutRegistryUnreadableWithReason: "Le registre des raccourcis n'a pas pu être lu :",
 
   /* What the recorder says once the system has answered. Catalogued in PIECES,
      for the reason the header amends: each of these is one node of a sentence

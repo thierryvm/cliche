@@ -19,6 +19,13 @@
  * combination may honestly be drawn. This screen asks the same two commands the
  * launcher asks, and reads the same answer.
  *
+ * Since 7 September 2026 it also asks them the same WAY: `readRegistry`
+ * (src/shortcut-probe.ts) is what asks again while the backend answers that it
+ * has not decided yet, and what gives up rather than loading for ever. This
+ * screen meets that answer far less often than the launcher - the window opens
+ * on the launcher, so `setup` has long finished by the time anybody presses this
+ * tab - but a second policy for one backend is how two screens come to disagree.
+ *
  * # THE MARKUP IS THE MAQUETTE'S, class for class
  *
  * `src/design/Showcase.tsx`, section `s-recorder`: a `.c-field` holding a
@@ -71,6 +78,7 @@ import Keys from './Keys';
 import { Glyph, ICON } from './design/Glyph';
 import { hintFor } from './shortcut-hint';
 import type { ShortcutHint } from './shortcut-hint';
+import { readRegistry } from './shortcut-probe';
 import { drawn, outcomeOf, record } from './shortcut-recorder';
 import type { RecorderNote, RefusalKey } from './shortcut-recorder';
 import { describeShortcutStatus, describeShortcuts, setCaptureShortcut } from './shortcuts';
@@ -146,13 +154,21 @@ function fieldFrom(hint: ShortcutHint): Field {
       return { phase: 'idle', active: undefined, note: { state: 'stranded', refused: hint.keys } };
     case 'unavailable':
       return { phase: 'idle', active: undefined, note: { state: 'none' } };
-    // `loading` cannot arrive here: `hintFor` returns it only for a read still
-    // in flight, and this is called on one that came back. It is named rather
-    // than left to a `default`, so the day a sixth state is added this switch
-    // stops compiling instead of quietly claiming the registry is unreadable.
     case 'unreadable':
-    case 'loading':
+      // The REASON the hint now carries is not drawn here. The maquette's field
+      // message is the sentence alone (`src/design/Showcase.tsx`, section
+      // s-recorder, specimen « indisponible »), and the quotation belongs to
+      // the launcher's note, which is the one that was published with it. The
+      // console below has it either way.
       return { phase: 'unreadable' };
+    // `loading` cannot arrive here: `readRegistry` hands over a read that has
+    // SETTLED - a decided status, or a failure - and `hintFor` returns
+    // `loading` only for one still in flight. It is named rather than left to a
+    // `default`, so the day a sixth state is added this switch stops compiling.
+    // It reserves the box rather than claiming the registry could not be read:
+    // an unreachable branch that lies is still a lie in the type.
+    case 'loading':
+      return { phase: 'reading' };
   }
 }
 
@@ -160,38 +176,53 @@ export default function Settings() {
   const [field, setField] = useState<Field>({ phase: 'reading' });
 
   useEffect(() => {
-    // StrictMode runs effects twice in development, so both commands are asked
+    // StrictMode runs effects twice in development, so the whole read happens
     // twice there. That is the dev double-render, not a bug.
     let abandoned = false;
+    let pending: number | null = null;
 
-    // Both or neither, for the reason the launcher gives: what the field shows
-    // is drawn from the table AND from what the system answered about it, and a
-    // screen holding one of the two would have to guess the other.
-    Promise.all([describeShortcuts(), describeShortcutStatus()]).then(
-      ([entries, registration]) => {
-        if (abandoned) return;
+    // The same read as the launcher's, and the SAME `src/shortcut-probe.ts`:
+    // both commands on every ask, and a bounded set of asks while the backend
+    // answers that it has not decided. This screen reaches `starting` far less
+    // often - the window opens on the launcher, so `setup` has long finished by
+    // the time anybody presses this tab - but a second policy for the same
+    // question is how two screens come to disagree about one backend.
+    readRegistry(
+      () => Promise.all([describeShortcuts(), describeShortcutStatus()]),
+      (run, inMs) => {
+        pending = window.setTimeout(run, inMs);
+      },
+    ).then((settled) => {
+      if (abandoned) return;
 
-        if (registration.status !== 'accepted') {
-          // The operating system's own words, or this application's: English,
-          // technical, and useful to exactly one reader. The screen says what
-          // the user can act on; this puts the rest where it belongs.
-          console.warn(
-            `[cliche] settings: the capture shortcut is ${registration.status}`,
-            registration.reason,
-          );
-        }
-        setField(fieldFrom(hintFor({ status: 'read', entries, registration })));
-      },
-      (error: unknown) => {
-        if (!abandoned) {
-          console.error('[cliche] settings: the shortcut registry could not be read', error);
-          setField({ phase: 'unreadable' });
-        }
-      },
-    );
+      if (settled.status === 'unreadable') {
+        console.error(
+          '[cliche] settings: the shortcut registry could not be read',
+          settled.reason,
+        );
+      } else if (
+        settled.registration.status !== 'accepted' &&
+        // `starting` cannot reach here; the type still carries it. Same
+        // narrowing, same reason, as the launcher's.
+        settled.registration.status !== 'starting'
+      ) {
+        // The operating system's own words, or this application's: English,
+        // technical, and useful to exactly one reader. The screen says what
+        // the user can act on; this puts the rest where it belongs.
+        console.warn(
+          `[cliche] settings: the capture shortcut is ${settled.registration.status}`,
+          settled.registration.reason,
+        );
+      }
+
+      setField(fieldFrom(hintFor(settled)));
+    });
 
     return () => {
       abandoned = true;
+      if (pending !== null) {
+        window.clearTimeout(pending);
+      }
     };
   }, []);
 

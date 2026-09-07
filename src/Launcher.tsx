@@ -30,6 +30,24 @@
  * puts the window back when the veil ends. None of that is visible from here:
  * `captureRegion()` resolves before any of it has happened.
  *
+ * WHAT CHANGED ON 7 SEPTEMBER 2026, and it is the defect this screen shipped
+ * with. On the installed v0.1.0 this launcher drew a red note at startup - « le
+ * registre des raccourcis n'a pas pu être lu » - over a shortcut that worked.
+ * Tauri builds this window BEFORE it runs `setup`, so React boots and asks while
+ * the backend is still building the veil; the call came back an error and this
+ * file drew it as a failure. Rust now answers `starting` while it is deciding,
+ * and the two halves of the answer on this side are:
+ *
+ *   1. `starting` is drawn as « en cours », never as an échec - that decision is
+ *      `hintFor`'s, in `src/shortcut-hint.ts`;
+ *   2. the read ASKS AGAIN while that is the answer, a bounded number of times,
+ *      and gives up saying so - that decision is `src/shortcut-probe.ts`, which
+ *      also holds the two numbers and the reasoning for them.
+ *
+ * Neither of the two is in this file, and that is the point: what is left in the
+ * effect below is a timer to cancel and a flag that stops a `setState` after
+ * unmount, which are the only two things a component is the right place for.
+ *
  * ONE THING THAT IS STILL NOT DONE, said here because a screen that looks
  * finished is where an unfinished thing hides:
  *
@@ -47,6 +65,7 @@ import { Glyph, ICON } from './design/Glyph';
 import { captureRegion } from './launch';
 import { hintFor } from './shortcut-hint';
 import type { RegistryRead } from './shortcut-hint';
+import { readRegistry } from './shortcut-probe';
 import { describeShortcuts, describeShortcutStatus } from './shortcuts';
 import { UI_STRINGS } from './strings';
 
@@ -86,43 +105,64 @@ export default function Launcher() {
   const [read, setRead] = useState<RegistryRead>({ status: 'reading' });
 
   useEffect(() => {
-    // StrictMode runs effects twice in development, so both commands are asked
+    // StrictMode runs effects twice in development, so the whole read happens
     // twice there. That is the dev double-render, not a bug.
     let abandoned = false;
+    // `number | null` and `window.setTimeout`, like the veil's confirmation
+    // timer in `src/veil/main.ts`.
+    let pending: number | null = null;
 
-    // Both or neither: the reminder is drawn from the two together - what this
-    // application asked for, and what the system answered - and a screen that
-    // had one of them would have to guess the other.
-    Promise.all([describeShortcuts(), describeShortcutStatus()]).then(
-      ([entries, registration]) => {
-        if (abandoned) return;
+    // WHAT IS ASKED, AND WHEN IT IS ASKED AGAIN, are both in
+    // `src/shortcut-probe.ts`, where they are functions of their arguments and
+    // have tests. Two things stay here because only a component can hold them:
+    // the timer to cancel, and the flag that stops a `setState` on a screen
+    // that has gone.
+    //
+    // Both commands on every ask, never one: the reminder is drawn from the two
+    // together - what this application asked for, and what the system answered
+    // - and until `setup` has finished the first of them publishes the
+    // combination the SOURCE ships with.
+    readRegistry(
+      () => Promise.all([describeShortcuts(), describeShortcutStatus()]),
+      (run, inMs) => {
+        pending = window.setTimeout(run, inMs);
+      },
+    ).then((settled) => {
+      if (abandoned) return;
 
-        if (registration.status !== 'accepted') {
-          // The reason is the operating system's own words, or this
-          // application's: English, technical, and useful to exactly one
-          // reader. The terminal has the same line from Rust; this puts it
-          // where a developer with only the webview open can see it too.
-          console.warn(
-            `[cliche] launcher: the capture shortcut is ${registration.status}`,
-            registration.reason,
-          );
-        }
-        setRead({ status: 'read', entries, registration });
-      },
-      (error: unknown) => {
-        if (!abandoned) {
-          // The message is not shown: what the user needs to know is that the
-          // shortcut cannot be announced, and `.c-note--danger` says exactly
-          // that. The detail belongs in the console, where a refused ACL or a
-          // wrong-window guard can actually be acted on.
-          console.error('[cliche] launcher: the shortcut registry could not be read', error);
-          setRead({ status: 'unreadable' });
-        }
-      },
-    );
+      if (settled.status === 'unreadable') {
+        // What the user needs to know is on the screen, in French. This is the
+        // same sentence for a developer with only the webview open, next to
+        // whatever the terminal already holds from Rust.
+        console.error(
+          '[cliche] launcher: the shortcut registry could not be read',
+          settled.reason,
+        );
+      } else if (
+        settled.registration.status !== 'accepted' &&
+        // `starting` cannot reach here - the read settles on a decided answer
+        // or gives up - but the TYPE still carries it, and narrowing it away is
+        // cheaper than a claim in a comment.
+        settled.registration.status !== 'starting'
+      ) {
+        // The reason is the operating system's own words, or this
+        // application's: English, technical, and useful to exactly one reader.
+        console.warn(
+          `[cliche] launcher: the capture shortcut is ${settled.registration.status}`,
+          settled.registration.reason,
+        );
+      }
+
+      setRead(settled);
+    });
 
     return () => {
       abandoned = true;
+      // A timer still in flight would ask the backend again for a screen
+      // nobody is looking at, and answer into a component that is gone.
+      if (pending !== null) {
+        window.clearTimeout(pending);
+      }
     };
   }, []);
 
@@ -215,13 +255,22 @@ export default function Launcher() {
         </div>
       )}
 
+      {/* The note that claims nothing, and QUOTES what stopped the read since
+          7 September 2026. Thierry decided the shape that day: a French
+          sentence, then the technical reason as it arrived. Which of the two
+          forms of the sentence is drawn, and whether there is anything to
+          quote at all, are `hintFor`'s - a component that chose here would be
+          a second place the note is decided. The quotation is in English
+          because it is a quotation: `src/veil/confirmation.ts` has the long
+          version. */}
       {hint.state === 'unreadable' && (
         <div className="c-note c-note--danger" role="alert" style={BLOCK_GAP}>
           <Glyph d={ICON.alert} />
           <span>
             <strong>{UI_STRINGS.failure}</strong>
             {' — '}
-            {UI_STRINGS.shortcutRegistryUnreadable}
+            {UI_STRINGS[hint.sentenceKey]}
+            {hint.quotation}
           </span>
         </div>
       )}
