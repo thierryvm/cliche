@@ -55,7 +55,14 @@ export const ASK_AGAIN_AFTER_MS = 250;
  * first launch pays for WebView2 warming up and for whatever the machine's
  * antivirus makes of a new binary, several times what a warm one costs; three
  * seconds is the far side of that. Past it, a `setup` that still has not decided
- * is not slow, it is stuck, and saying so is more useful than a spinner.
+ * is more likely stuck than slow, and saying so is more useful than a spinner.
+ *
+ * WHAT THIS BOUND DOES NOT COVER, said rather than left to be assumed: it bounds
+ * the number of ASKS, not the time any one of them may take. A single `invoke`
+ * that never answers would leave the count untouched and the screen reading
+ * « en cours » for ever. Nothing observed does that - an early call answers
+ * quickly, with `starting` or with a rejection - so no per-ask deadline is
+ * bought here; the day one is needed, this is the paragraph that says why.
  *
  * WHY BOUNDED AT ALL. An unbounded poll would turn a `setup` that died into a
  * screen reading « lecture du registre des raccourcis… » for ever - the defect
@@ -104,6 +111,79 @@ export type Ask = () => Promise<Answer>;
  * unmounted.
  */
 export type Later = (run: () => void, inMs: number) => void;
+
+/** The two timer calls, injected so the waiting below can be tested. */
+export interface Timers {
+  readonly set: (run: () => void, inMs: number) => number;
+  readonly clear: (handle: number) => void;
+}
+
+/** A component's side of the wait: how to postpone, how to stop, and whether it has. */
+export interface Waiting {
+  /** Hand this to [`readRegistry`]. It arms nothing once [`Waiting.stop`] has run. */
+  readonly later: Later;
+  /** Called from the effect's cleanup. Idempotent. */
+  readonly stop: () => void;
+  /** Whether the screen has gone. The ONE flag, so nothing can disagree with it. */
+  readonly abandoned: () => boolean;
+}
+
+/**
+ * The timer a screen owns while it waits for start-up to decide.
+ *
+ * # THE DEFECT THIS EXISTS FOR, found in review on 7 September 2026
+ *
+ * Both screens used to arm their timer inline, with a `pending` handle their
+ * cleanup cleared. That is not enough, and the hole is exactly one ordering:
+ *
+ *   1. mount, `readRegistry` puts the FIRST ask in flight - no timer yet;
+ *   2. the user leaves the screen before that ask answers, which is the normal
+ *      case during the very seconds this whole lot is about. Cleanup runs,
+ *      finds `pending === null`, and clears nothing;
+ *   3. the ask answers `starting`, so `readRegistry` calls `later(...)` - the
+ *      closure of an effect that is already torn down. A timer is armed AFTER
+ *      the cleanup that would have cancelled it, and nothing will.
+ *
+ * Nothing crashed and no `setState` ran on a dead tree - the `abandoned` guard
+ * covered that. What DID happen was up to twelve more real `invoke` calls on
+ * behalf of a screen nobody is looking at. The comment above the old cleanup
+ * claimed to prevent exactly that, which made it a false statement as well as a
+ * defect.
+ *
+ * The remedy is that the flag and the timer live in ONE place and the arming
+ * consults the flag. Written here rather than twice in two components, because
+ * two copies of this ordering would drift the day one of them is edited.
+ */
+export function waiting(timers: Timers): Waiting {
+  let stopped = false;
+  let pending: number | null = null;
+
+  return {
+    later: (run, inMs) => {
+      // THE LINE THE DEFECT WAS MISSING. An arm requested after `stop` is an
+      // arm nobody will ever cancel.
+      if (stopped) {
+        return;
+      }
+      // A second arm before the first fired would strand the first handle. It
+      // cannot happen today - `readRegistry` waits for its answer before
+      // postponing again - so this is a guard, not a fix, and it costs one
+      // comparison.
+      if (pending !== null) {
+        timers.clear(pending);
+      }
+      pending = timers.set(run, inMs);
+    },
+    stop: () => {
+      stopped = true;
+      if (pending !== null) {
+        timers.clear(pending);
+        pending = null;
+      }
+    },
+    abandoned: () => stopped,
+  };
+}
 
 /** What to do with the answer that just came back. */
 export type NextAsk =

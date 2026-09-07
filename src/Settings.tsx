@@ -78,7 +78,7 @@ import Keys from './Keys';
 import { Glyph, ICON } from './design/Glyph';
 import { hintFor } from './shortcut-hint';
 import type { ShortcutHint } from './shortcut-hint';
-import { readRegistry } from './shortcut-probe';
+import { readRegistry, waiting } from './shortcut-probe';
 import { drawn, outcomeOf, record } from './shortcut-recorder';
 import type { RecorderNote, RefusalKey } from './shortcut-recorder';
 import { describeShortcutStatus, describeShortcuts, setCaptureShortcut } from './shortcuts';
@@ -178,8 +178,12 @@ export default function Settings() {
   useEffect(() => {
     // StrictMode runs effects twice in development, so the whole read happens
     // twice there. That is the dev double-render, not a bug.
-    let abandoned = false;
-    let pending: number | null = null;
+    // One thing, not two: see `waiting`'s header for the ordering that made a
+    // separate flag and timer insufficient.
+    const wait = waiting({
+      set: (run, inMs) => window.setTimeout(run, inMs),
+      clear: (handle) => window.clearTimeout(handle),
+    });
 
     // The same read as the launcher's, and the SAME `src/shortcut-probe.ts`:
     // both commands on every ask, and a bounded set of asks while the backend
@@ -189,11 +193,9 @@ export default function Settings() {
     // question is how two screens come to disagree about one backend.
     readRegistry(
       () => Promise.all([describeShortcuts(), describeShortcutStatus()]),
-      (run, inMs) => {
-        pending = window.setTimeout(run, inMs);
-      },
+      wait.later,
     ).then((settled) => {
-      if (abandoned) return;
+      if (wait.abandoned()) return;
 
       if (settled.status === 'unreadable') {
         console.error(
@@ -218,12 +220,7 @@ export default function Settings() {
       setField(fieldFrom(hintFor(settled)));
     });
 
-    return () => {
-      abandoned = true;
-      if (pending !== null) {
-        window.clearTimeout(pending);
-      }
-    };
+    return () => wait.stop();
   }, []);
 
   const listening = field.phase === 'listening';

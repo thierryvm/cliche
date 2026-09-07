@@ -23,6 +23,7 @@ import {
   nextAsk,
   reasonText,
   readRegistry,
+  waiting,
 } from './shortcut-probe';
 import type { Answer, Later } from './shortcut-probe';
 import type { ShortcutEntry, ShortcutStatus } from './shortcuts';
@@ -284,5 +285,93 @@ describe('readRegistry', () => {
 
     expect(read.status).toBe('unreadable');
     expect(made).toBe(1);
+  });
+});
+
+describe('the timer a screen owns while it waits', () => {
+  /** A fake pair of timer calls, so nothing here waits and everything is counted. */
+  function fakeTimers() {
+    const armed: { handle: number; run: () => void; inMs: number }[] = [];
+    const cleared: number[] = [];
+    let next = 1;
+
+    return {
+      armed,
+      cleared,
+      timers: {
+        set: (run: () => void, inMs: number) => {
+          const handle = next;
+          next += 1;
+          armed.push({ handle, run, inMs });
+          return handle;
+        },
+        clear: (handle: number) => {
+          cleared.push(handle);
+        },
+      },
+    };
+  }
+
+  it('arms nothing once the screen has gone', () => {
+    // THE DEFECT THIS TEST EXISTS FOR, found in review on 7 September 2026.
+    // `readRegistry` calls `later` when its ask ANSWERS, which can be long
+    // after the cleanup ran. Before the guard, that call armed a timer the
+    // cleanup could not have cancelled - it had already run - and the screen
+    // went on asking the backend up to twelve more times for nobody.
+    const { armed, timers } = fakeTimers();
+    const wait = waiting(timers);
+
+    wait.stop();
+    wait.later(() => {}, ASK_AGAIN_AFTER_MS);
+
+    expect(armed).toEqual([]);
+  });
+
+  it('cancels a timer that was already armed when the screen went', () => {
+    const { armed, cleared, timers } = fakeTimers();
+    const wait = waiting(timers);
+
+    wait.later(() => {}, ASK_AGAIN_AFTER_MS);
+    wait.stop();
+
+    expect(armed).toHaveLength(1);
+    expect(cleared).toEqual([armed[0]?.handle]);
+  });
+
+  it('says whether the screen has gone, so one flag answers for everything', () => {
+    // The read guards its own `setState` on this. Two flags that could disagree
+    // is the shape the defect above came in.
+    const wait = waiting(fakeTimers().timers);
+
+    expect(wait.abandoned()).toBe(false);
+    wait.stop();
+    expect(wait.abandoned()).toBe(true);
+  });
+
+  it('strands no handle if a second wait is asked for before the first fires', () => {
+    // Cannot happen today - `readRegistry` waits for its answer before
+    // postponing again - so this holds a guard, not a repair.
+    const { armed, cleared, timers } = fakeTimers();
+    const wait = waiting(timers);
+
+    wait.later(() => {}, ASK_AGAIN_AFTER_MS);
+    wait.later(() => {}, ASK_AGAIN_AFTER_MS);
+
+    expect(armed).toHaveLength(2);
+    expect(cleared).toEqual([armed[0]?.handle]);
+  });
+
+  it('stops twice without cancelling a handle twice', () => {
+    // React can run a cleanup more than once in StrictMode. Clearing a handle
+    // that is already cleared is harmless in the browser, but a second entry
+    // here would mean this object forgot it had stopped.
+    const { cleared, timers } = fakeTimers();
+    const wait = waiting(timers);
+
+    wait.later(() => {}, ASK_AGAIN_AFTER_MS);
+    wait.stop();
+    wait.stop();
+
+    expect(cleared).toHaveLength(1);
   });
 });

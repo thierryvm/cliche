@@ -45,8 +45,10 @@
  *      also holds the two numbers and the reasoning for them.
  *
  * Neither of the two is in this file, and that is the point: what is left in the
- * effect below is a timer to cancel and a flag that stops a `setState` after
- * unmount, which are the only two things a component is the right place for.
+ * effect below is the timer this screen owns and the flag that says it has gone
+ * - and since a review of the same day, those are ONE object (`waiting`), not
+ * two locals. Holding them apart left a cleanup able to cancel a timer that had
+ * not been armed yet, while the answer still in flight armed one afterwards.
  *
  * ONE THING THAT IS STILL NOT DONE, said here because a screen that looks
  * finished is where an unfinished thing hides:
@@ -65,7 +67,7 @@ import { Glyph, ICON } from './design/Glyph';
 import { captureRegion } from './launch';
 import { hintFor } from './shortcut-hint';
 import type { RegistryRead } from './shortcut-hint';
-import { readRegistry } from './shortcut-probe';
+import { readRegistry, waiting } from './shortcut-probe';
 import { describeShortcuts, describeShortcutStatus } from './shortcuts';
 import { UI_STRINGS } from './strings';
 
@@ -107,16 +109,21 @@ export default function Launcher() {
   useEffect(() => {
     // StrictMode runs effects twice in development, so the whole read happens
     // twice there. That is the dev double-render, not a bug.
-    let abandoned = false;
-    // `number | null` and `window.setTimeout`, like the veil's confirmation
-    // timer in `src/veil/main.ts`.
-    let pending: number | null = null;
+    // THE FLAG AND THE TIMER ARE ONE THING, and `waiting` is what makes them
+    // one. Holding them separately here left a hole: a cleanup that ran before
+    // the first ask answered cancelled nothing, and the answer then armed a
+    // timer nobody would ever cancel. `waiting`'s own header has the ordering.
+    const wait = waiting({
+      // `window.setTimeout` and `number`, like the veil's confirmation timer in
+      // `src/veil/main.ts`. Wrapped rather than passed bare: an unbound method
+      // handed across a call is a `this` waiting to be lost.
+      set: (run, inMs) => window.setTimeout(run, inMs),
+      clear: (handle) => window.clearTimeout(handle),
+    });
 
     // WHAT IS ASKED, AND WHEN IT IS ASKED AGAIN, are both in
     // `src/shortcut-probe.ts`, where they are functions of their arguments and
-    // have tests. Two things stay here because only a component can hold them:
-    // the timer to cancel, and the flag that stops a `setState` on a screen
-    // that has gone.
+    // have tests.
     //
     // Both commands on every ask, never one: the reminder is drawn from the two
     // together - what this application asked for, and what the system answered
@@ -124,11 +131,9 @@ export default function Launcher() {
     // combination the SOURCE ships with.
     readRegistry(
       () => Promise.all([describeShortcuts(), describeShortcutStatus()]),
-      (run, inMs) => {
-        pending = window.setTimeout(run, inMs);
-      },
+      wait.later,
     ).then((settled) => {
-      if (abandoned) return;
+      if (wait.abandoned()) return;
 
       if (settled.status === 'unreadable') {
         // What the user needs to know is on the screen, in French. This is the
@@ -156,14 +161,10 @@ export default function Launcher() {
       setRead(settled);
     });
 
-    return () => {
-      abandoned = true;
-      // A timer still in flight would ask the backend again for a screen
-      // nobody is looking at, and answer into a component that is gone.
-      if (pending !== null) {
-        window.clearTimeout(pending);
-      }
-    };
+    // A timer still in flight would ask the backend again for a screen nobody
+    // is looking at, and answer into a component that is gone. `stop` also
+    // shuts the door on an arm requested after this line runs.
+    return () => wait.stop();
   }, []);
 
   const hint = hintFor(read);
