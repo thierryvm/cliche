@@ -4,11 +4,16 @@
 
 > Pour Thierry, à faire soi-même. Écrit le 6 septembre 2026, lien de release ajouté le 7.
 >
-> C'est la première fois que Cliché sort du dépôt. Rien de ce qui suit n'a été
-> observé sur une machine : l'application n'a jamais été lancée par l'agent, ni
-> installée. **Tout ce document est une procédure à exécuter, pas un compte
-> rendu.** Ce qui a été vérifié sur le binaire, sans le lancer, est listé à la
-> fin.
+> **Le geste 1 est ACQUIS.** Thierry a installé la release v0.1.0 et lancé
+> Cliché le 7 septembre 2026 vers 1 h 20 : la fenêtre s'ouvre. C'est le premier
+> lancement de ce produit par un humain, et le seul point de ce document qui
+> soit un compte rendu.
+>
+> Les gestes 2, 3 et 4 n'ont pas été rapportés dans les formes et **ne sont pas
+> tenus pour faits**. Rien du reste n'a été observé : l'application n'a jamais
+> été lancée par l'agent, ni installée. **Tout ce document reste une procédure à
+> exécuter, pas un compte rendu.** Ce qui a été vérifié sur le binaire, sans le
+> lancer, est listé à la fin.
 
 ---
 
@@ -86,7 +91,35 @@ Entrée.
 
 ## 4. Ce qu'il faut essayer — quatre gestes
 
-### Geste 1 — la fenêtre s'ouvre
+### Geste 0 — TUER TOUTE INSTANCE DÉJÀ EN VIE. À faire en premier, à chaque fois.
+
+⚠️ **Ce geste n'est nécessaire que tant que le binaire installé est antérieur au
+correctif du 7 septembre 2026.** La v0.1.0 en est dépourvue ; le prochain
+installeur l'aura.
+
+Ouvrir le **Gestionnaire des tâches** (`Ctrl + Maj + Échap`), onglet
+« Détails », chercher **`cliche.exe`**, et terminer **toutes** les entrées
+trouvées. Il peut y en avoir **deux**, et c'est le cas intéressant.
+
+**Pourquoi.** Sur la v0.1.0, fermer la fenêtre de Cliché ne termine pas
+Cliché. Le voile — la nappe plein écran sur laquelle on trace un rectangle —
+est une fenêtre créée cachée au démarrage, et le moteur de Tauri ne demande la
+sortie que lorsqu'il ne reste **plus aucune** fenêtre
+(`tauri-runtime-wry-2.11.4/src/lib.rs:4310-4325`). Le voile la garde ouverte.
+Le processus survit donc **sans fenêtre visible, sans icône dans la barre des
+tâches — et en tenant toujours `Ctrl + Maj + 2`**.
+
+**Ce que ça donne si on l'oublie**, et c'est exactement ce qui est arrivé le
+7 septembre à 1 h 27 : on relance Cliché, la nouvelle fenêtre affiche un
+bandeau rouge « Raccourci refusé — Ctrl + Maj + 2 est tenu par une autre
+application », et l'autre application **est Cliché**. Pire : le raccourci
+fonctionne quand même, mais c'est le voile du **fantôme** qui s'affiche, pas
+celui de la fenêtre qu'on regarde.
+
+Deux `cliche.exe` dans la liste = un fantôme est là. Un seul, alors qu'aucune
+fenêtre Cliché n'est ouverte = c'est un fantôme aussi.
+
+### Geste 1 — la fenêtre s'ouvre — ✅ FAIT le 7 septembre 2026
 
 Lancer Cliché. **Attendu** : une fenêtre avec une barre de titre sur mesure
 (pas celle de Windows), le titre « Cliché » à gauche, et à droite deux boutons
@@ -234,12 +267,34 @@ Le contrôle du manifeste n'est pas une précaution abstraite : un seul caractè
 accentué dedans, **même dans un commentaire**, produit un binaire qui refuse de
 démarrer avec `os error 14001`, alors que `cargo build` réussit sans un mot.
 
+## Ce qui a été OBSERVÉ le 7 septembre 2026
+
+Par Thierry, vers 1 h 20, depuis l'installeur de la release v0.1.0 — le premier
+lancement de Cliché par un humain :
+
+- **L'installeur installe** et **l'application démarre** : la fenêtre s'ouvre.
+  Le contrôle du manifeste ci-dessus se voit confirmé sur pièce.
+- Deux défauts sont sortis de ces dix minutes, tous deux corrigés depuis
+  (l'un d'eux est la raison du geste 0) :
+  - **le processus fantôme**, décrit au geste 0 ;
+  - **une boîte vide au bas du voile**, d'environ 416 × 53 px avec une croix
+    grise — noire en thème sombre pendant la sélection, blanche après. C'était
+    la confirmation « largeur×hauteur copié » rendue **avant d'avoir quoi que
+    ce soit à dire** : elle portait bien l'attribut `hidden`, mais
+    `.c-toast-region { display: flex }` bat la règle du navigateur.
+    Reproduite dans un navigateur, corrigée, et `scripts/check-hidden.mjs` la
+    rattraperait aujourd'hui.
+
+**Aucun des deux correctifs n'est dans le binaire de la release v0.1.0.** Ils
+attendent le prochain installeur.
+
 ## Ce qui n'a PAS été vérifié
 
-- **Que l'application démarre.** Elle n'a jamais été lancée, ni depuis le dépôt,
-  ni depuis l'installeur.
-- **Que l'installeur installe.** Il n'a jamais été exécuté, et son chemin
-  d'installation est donc annoncé au conditionnel plus haut.
+- **Le chemin d'installation** est annoncé au conditionnel plus haut : personne
+  n'a lu l'installeur décompressé pour l'établir.
+- **Aucun des correctifs du 7 septembre n'a été vu tourner.** Que fermer la
+  fenêtre termine réellement le processus, et qu'un second lancement ramène le
+  premier au premier plan : lu dans le code et sous test, jamais observé.
 - **Le binaire n'est pas signé** : SmartScreen avertira, chez toi comme chez
   n'importe qui d'autre.
 - **Le budget de latence après le passage en fenêtre transparente** — section 6.
