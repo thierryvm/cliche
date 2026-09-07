@@ -44,6 +44,25 @@ tauri-plugin-global-shortcut = "2.3.2"
 # docs.rs before being relied on here, not assumed.
 tauri-plugin-clipboard-manager = "2.3.3"
 
+# One Cliche at a time. Added 7 September 2026, against the ghost process
+# described in `src/lifecycle.rs`: a second launch hands the screen back to the
+# first process and stops, instead of asking Windows for a global shortcut the
+# first process is still holding.
+#
+# 2.4.4 was verified on the crates.io API on 7 September 2026: published
+# 2026-08-31, Apache-2.0 OR MIT, and it requires `tauri ^2.10`, which the 2.11.5
+# above satisfies. Same caveat as the `tauri` line: this is a caret requirement,
+# and what actually holds 2.4.4 is Cargo.lock.
+#
+# It adds NO capability and NO ACL entry: the plugin exposes no JavaScript API,
+# so nothing of it is reachable through `invoke` and there is nothing for a
+# capability to grant. Read on v2.tauri.app/plugin/single-instance on
+# 7 September 2026 - "Because this Plugin currently does not have JavaScript
+# APIs you do not have to configure capabilities to use it" - and consistent
+# with `ipc.rs`'s sentinel, which reads this crate's own `generate_handler!` and
+# finds nothing new there.
+tauri-plugin-single-instance = "2.4.4"
+
 # Screen capture. A one-shot API, and cross-platform, which keeps the capture
 # layer behind a seam even though only Windows ships. `windows-capture` aims at
 # continuous capture and costs more to set up; moving to it would be the result
