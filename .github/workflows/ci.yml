@@ -55,6 +55,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # A vulnerable production dependency stops the pull request here rather
+      # than being found by chance after the merge (1 October 2026: a critical
+      # `next` advisory sat unseen on another project's main). Production
+      # dependencies only, high and critical only, no `|| true`.
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level high
+
       # Cheapest gate first: it needs neither Rust nor node_modules to be
       # meaningful, and it is the one that catches a half-finished release.
       - name: One version, three files
